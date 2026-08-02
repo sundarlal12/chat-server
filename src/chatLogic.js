@@ -1,11 +1,12 @@
-const { dbOne, dbExec } = require('./db');
-const { newObjectId, isObjectId, mysqlNow } = require('./helpers');
+const { newObjectId, isObjectId, iso } = require('./helpers');
+const store = require('./store');
 
 /**
- * Shared persistence logic used by both the REST routes and the socket.io
- * event handlers (send-message/send-file-message both go through
- * insertMessage, create-ticket goes through createOrGetTicket, etc.) so
- * there's exactly one place that writes to support_tickets/support_messages.
+ * Shared in-memory chat logic used by both the REST routes and the
+ * socket.io event handlers (send-message/send-file-message both go
+ * through insertMessage, create-ticket goes through createOrGetTicket,
+ * etc.) so there's exactly one place that mutates the store. No database -
+ * see store.js for why.
  */
 
 async function createOrGetTicket(user, { topicId, subject, description }) {
@@ -16,25 +17,31 @@ async function createOrGetTicket(user, { topicId, subject, description }) {
   if (subject.length > 255) { throw httpError(400, 'Subject is too long'); }
   if (description.length > 1000) { throw httpError(400, 'Description is too long'); }
 
-  if (topicId) {
-    const topic = await dbOne('SELECT id FROM support_topics WHERE oid = :o AND is_active = 1 LIMIT 1', { o: topicId.toLowerCase() });
-    if (!topic) { throw httpError(404, 'Topic not found'); }
+  if (topicId && !store.TOPICS.some((t) => t.oid === topicId.toLowerCase())) {
+    throw httpError(404, 'Topic not found');
   }
 
-  const existing = await dbOne(
-    "SELECT * FROM support_tickets WHERE user_oid = :u AND status != 'closed' ORDER BY created_at DESC LIMIT 1",
-    { u: String(user.oid) }
-  );
-  if (existing) { return existing; }
+  const existing = store.getTicketForUser(String(user.oid));
+  if (existing && existing.status !== 'closed') { return existing; }
 
-  const oid = newObjectId();
-  const now = mysqlNow();
-  await dbExec(
-    `INSERT INTO support_tickets (oid,user_oid,topic_oid,subject,description,status,priority,last_activity,created_at,updated_at)
-     VALUES (:oid,:u,:t,:s,:d,'open','medium',:now,:now,:now)`,
-    { oid, u: String(user.oid), t: topicId ? topicId.toLowerCase() : null, s: subject, d: description, now }
-  );
-  return dbOne('SELECT * FROM support_tickets WHERE oid = :o LIMIT 1', { o: oid });
+  const now = new Date();
+  const ticket = {
+    oid: newObjectId(),
+    user_oid: String(user.oid),
+    topic_oid: topicId ? topicId.toLowerCase() : null,
+    subject,
+    description,
+    status: 'open',
+    priority: 'medium',
+    recipient_oid: null,
+    agent_name: '',
+    agent_status: '',
+    agent_profile_pic: '',
+    last_activity: now,
+    created_at: now,
+    updated_at: now,
+  };
+  return store.saveTicket(ticket);
 }
 
 async function insertMessage(user, ticket, body) {
@@ -55,43 +62,53 @@ async function insertMessage(user, ticket, body) {
 
   const senderOid = String(user.oid);
   const senderName = String(user.name || '');
-  const senderFull = user.first_name ? `${user.first_name} ${user.last_name || ''}`.trim() : senderName;
-  const senderPic = String(user.profile_pic || '');
+  const senderFull = user.firstName ? `${user.firstName} ${user.lastName || ''}`.trim() : senderName;
+  const senderPic = String(user.profilePic || '');
   const receiverOid = ticket.recipient_oid ? String(ticket.recipient_oid) : null;
 
-  const oid = newObjectId();
-  const now = mysqlNow();
-  await dbExec(
-    `INSERT INTO support_messages
-       (oid,ticket_oid,sender_oid,sender_name,sender_full_name,sender_profile_pic,
-        receiver_oid,content,caption,message_type,read_status,delivery_status,
-        attachment_url,attachment_type,attachment_name,attachment_size,duration,
-        created_at,updated_at)
-     VALUES (:oid,:t,:so,:sn,:sf,:sp,:ro,:c,:cap,:mt,0,'sent',:au,:at,:an,:as,:du,:now,:now)`,
-    {
-      oid, t: String(ticket.oid), so: senderOid, sn: senderName, sf: senderFull, sp: senderPic,
-      ro: receiverOid, c: content, cap: caption, mt: messageType,
-      au: attachmentUrl || null, at: attachmentType, an: attachmentName,
-      as: attachmentSize !== undefined && attachmentSize !== null && attachmentSize !== '' ? Number(attachmentSize) : null,
-      du: duration !== undefined && duration !== null && duration !== '' ? Number(duration) : null,
-      now,
-    }
-  );
-  await dbExec('UPDATE support_tickets SET last_activity = :now, updated_at = :now WHERE oid = :o', { now, o: String(ticket.oid) });
+  const now = new Date();
+  const message = {
+    oid: newObjectId(),
+    ticket_oid: String(ticket.oid),
+    sender_oid: senderOid,
+    sender_name: senderName,
+    sender_full_name: senderFull,
+    sender_profile_pic: senderPic,
+    receiver_oid: receiverOid,
+    content,
+    caption,
+    message_type: messageType,
+    read_status: 0,
+    delivery_status: 'sent',
+    attachment_url: attachmentUrl || null,
+    attachment_type: attachmentType,
+    attachment_name: attachmentName,
+    attachment_size: attachmentSize !== undefined && attachmentSize !== null && attachmentSize !== '' ? Number(attachmentSize) : null,
+    duration: duration !== undefined && duration !== null && duration !== '' ? Number(duration) : null,
+    created_at: now,
+    updated_at: now,
+  };
+  store.addMessage(String(ticket.oid), message);
+  ticket.last_activity = now;
+  ticket.updated_at = now;
 
-  return dbOne('SELECT * FROM support_messages WHERE oid = :o LIMIT 1', { o: oid });
+  return message;
 }
 
 async function markMessagesRead(user, ticketId) {
-  const ticket = await dbOne('SELECT * FROM support_tickets WHERE oid = :o LIMIT 1', { o: ticketId });
+  const ticket = store.getTicketByOid(ticketId);
   if (!ticket) { throw httpError(404, 'Ticket not found'); }
   if (String(ticket.user_oid) !== String(user.oid)) { throw httpError(403, 'You do not have access to this ticket'); }
 
-  const updated = await dbExec(
-    `UPDATE support_messages SET read_status = 1, updated_at = :now
-      WHERE ticket_oid = :t AND receiver_oid = :u AND read_status = 0`,
-    { now: mysqlNow(), t: ticketId, u: String(user.oid) }
-  );
+  const now = new Date();
+  let updated = 0;
+  for (const m of store.getMessages(ticketId)) {
+    if (m.receiver_oid === String(user.oid) && !m.read_status) {
+      m.read_status = 1;
+      m.updated_at = now;
+      updated++;
+    }
+  }
   return updated;
 }
 

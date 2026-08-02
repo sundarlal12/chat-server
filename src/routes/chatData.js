@@ -1,5 +1,5 @@
 const express = require('express');
-const { dbOne, dbAll } = require('../db');
+const store = require('../store');
 const { ticketDoc, messageDoc } = require('../docs');
 const { requireAuth } = require('../auth');
 const { asyncRoute } = require('../asyncRoute');
@@ -9,7 +9,9 @@ const router = express.Router();
 /**
  * GET /v1/api/get-chat-data-of-recent-ticket?page=&limit=10
  * See api/v1/api/get-chat-data-of-recent-ticket.php's header comment for
- * the full decompiled-model contract this matches.
+ * the full decompiled-model contract this matches. No database - reads
+ * from the in-memory store (see store.js), so this only reflects messages
+ * sent since the server process last started.
  */
 router.get('/get-chat-data-of-recent-ticket', requireAuth(), asyncRoute(async (req, res) => {
   const user = req.chatUser;
@@ -18,10 +20,7 @@ router.get('/get-chat-data-of-recent-ticket', requireAuth(), asyncRoute(async (r
   if (limit <= 0 || limit > 100) { limit = 10; }
   const offset = (page - 1) * limit;
 
-  const ticketRow = await dbOne(
-    'SELECT * FROM support_tickets WHERE user_oid = :u ORDER BY created_at DESC, id DESC LIMIT 1',
-    { u: String(user.oid) }
-  );
+  const ticketRow = store.getTicketForUser(String(user.oid));
 
   let ticket = null;
   let messages = [];
@@ -30,17 +29,12 @@ router.get('/get-chat-data-of-recent-ticket', requireAuth(), asyncRoute(async (r
   if (ticketRow) {
     ticket = ticketDoc(ticketRow);
 
-    const totalRow = await dbOne(
-      'SELECT COUNT(*) AS n FROM support_messages WHERE ticket_oid = :t',
-      { t: String(ticketRow.oid) }
-    );
-    const totalMessages = Number(totalRow?.n || 0);
-
-    const rows = await dbAll(
-      `SELECT * FROM support_messages WHERE ticket_oid = :t ORDER BY created_at DESC, id DESC LIMIT ${limit} OFFSET ${offset}`,
-      { t: String(ticketRow.oid) }
-    );
-    messages = rows.map(messageDoc);
+    // Store keeps messages oldest-first; the real contract returns
+    // newest-first (the client reverses it on receipt - see
+    // api/v1/api/get-chat-data-of-recent-ticket.php's header comment).
+    const all = store.getMessages(String(ticketRow.oid)).slice().reverse();
+    const totalMessages = all.length;
+    messages = all.slice(offset, offset + limit).map(messageDoc);
 
     pagination = {
       page,

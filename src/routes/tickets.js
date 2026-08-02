@@ -2,7 +2,7 @@ const express = require('express');
 const { requireAuth } = require('../auth');
 const { createOrGetTicket, insertMessage, markMessagesRead } = require('../chatLogic');
 const { ticketDoc, messageDoc } = require('../docs');
-const { dbOne } = require('../db');
+const store = require('../store');
 
 const router = express.Router();
 
@@ -25,7 +25,7 @@ router.post('/send-message', requireAuth(), async (req, res) => {
   try {
     const body = req.body || {};
     if (!body.ticketId) { return res.status(400).json({ code: 400, message: 'ticketId is required' }); }
-    const ticket = await dbOne('SELECT * FROM support_tickets WHERE oid = :o LIMIT 1', { o: body.ticketId });
+    const ticket = store.getTicketByOid(body.ticketId);
     if (!ticket) { return res.status(404).json({ code: 404, message: 'Ticket not found' }); }
     const message = await insertMessage(req.chatUser, ticket, body);
     res.json({ status: 1, data: messageDoc(message), message: 'Message sent successfully' });

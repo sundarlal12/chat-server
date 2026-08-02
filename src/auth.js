@@ -1,28 +1,21 @@
-const jwt = require('jsonwebtoken');
-const { dbOne } = require('./db');
+const { getUserInfo } = require('./phpApi');
 
 /**
- * Verifies a token the exact same way PHP's auth_user()/chat_auth_user()
- * do: HS256, type claim must be 'access', subject must be a real,
- * non-blocked users.oid. By explicit operator decision chatPanelTokens
- * reuses the same token as the main app (see auth_tokens_bundle() in
- * api/v1/_helpers.php), so there's only ONE scheme to check here, not a
- * separate chat-panel-only token family.
+ * With no local database, this service has no way to independently verify
+ * a JWT's subject is a real, non-banned user - so rather than re-implement
+ * (and risk drifting from) PHP's auth_user() logic, this delegates
+ * entirely to it: calling GET /v1/api/get-user-data with the caller's
+ * bearer token. PHP already does the HS256/type='access'/banned-user
+ * checks there (see auth_user() in api/_bootstrap.php) and this service
+ * reuses that token unchanged (chatPanelTokens IS tokens, by explicit
+ * operator decision - see auth_tokens_bundle()), so a 401/403 from PHP
+ * here means exactly what it would mean on the main API. Results are
+ * cached briefly (see phpApi.js) so a burst of messages/socket events
+ * from one session doesn't hit PHP on every single one.
  */
 async function verifyToken(token) {
   if (!token) { return null; }
-  let claims;
-  try {
-    claims = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
-  } catch {
-    return null;
-  }
-  if (claims.type !== 'access') { return null; }
-
-  const user = await dbOne('SELECT * FROM users WHERE oid = :oid LIMIT 1', { oid: String(claims.sub) });
-  if (!user) { return null; }
-  if (user.active !== undefined && String(user.active) === '0') { return null; }
-  return user;
+  return getUserInfo(token);
 }
 
 /**

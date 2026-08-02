@@ -1,5 +1,5 @@
 const { verifyToken } = require('../auth');
-const { dbOne } = require('../db');
+const store = require('../store');
 const { createOrGetTicket, insertMessage, markMessagesRead, httpError } = require('../chatLogic');
 const { ticketDoc, messageDoc } = require('../docs');
 
@@ -37,13 +37,8 @@ function attachChatSocket(io) {
     // A user only ever has one non-closed ticket at a time (see
     // createOrGetTicket) - auto-join it on connect so receive-message/
     // typing/etc. reach them without a separate "join room" event.
-    (async () => {
-      const ticket = await dbOne(
-        "SELECT oid FROM support_tickets WHERE user_oid = :u AND status != 'closed' ORDER BY created_at DESC LIMIT 1",
-        { u: String(user.oid) }
-      );
-      if (ticket) { socket.join(String(ticket.oid)); }
-    })().catch((e) => console.error('auto-join failed', e));
+    const existingTicket = store.getTicketForUser(String(user.oid));
+    if (existingTicket && existingTicket.status !== 'closed') { socket.join(String(existingTicket.oid)); }
 
     socket.on('create-ticket', async (payload, ack) => {
       try {
@@ -61,7 +56,7 @@ function attachChatSocket(io) {
       try {
         const body = payload || {};
         if (!body.ticketId) { throw httpError(400, 'ticketId is required'); }
-        const ticket = await dbOne('SELECT * FROM support_tickets WHERE oid = :o LIMIT 1', { o: body.ticketId });
+        const ticket = store.getTicketByOid(body.ticketId);
         if (!ticket) { throw httpError(404, 'Ticket not found'); }
         if (body.messageType === undefined) { body.messageType = defaultMessageType; }
 
