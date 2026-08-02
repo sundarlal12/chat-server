@@ -19,6 +19,19 @@ const TOPICS = [
     created_at: new Date('2025-01-21T07:02:34.384Z'), updated_at: new Date('2026-06-11T06:03:53.014Z') },
 ];
 
+// The real backend auto-assigns every new ticket to a support identity
+// immediately (confirmed via a real captured socket.io trace - "assignedTo"
+// is already populated in the create-ticket response, before any human/AI
+// has actually replied). No admin panel exists yet to pick a real agent,
+// so this is a fixed placeholder identity - override via env vars once a
+// real agent/admin system exists.
+const DEFAULT_AGENT = {
+  oid: process.env.DEFAULT_AGENT_ID || '69d37240ec8077df95971617',
+  userName: process.env.DEFAULT_AGENT_USERNAME || 'sangeetha',
+  fullName: process.env.DEFAULT_AGENT_FULLNAME || 'Support Executive',
+  profilePic: '',
+};
+
 /** userOid -> ticket object. One open ticket per user, matching the app's single "recent ticket" concept. */
 const ticketsByUser = new Map();
 /** ticketOid -> ticket object (same object as ticketsByUser's value) - O(1) lookup by id. */
@@ -53,6 +66,7 @@ function addMessage(ticketOid, message) {
 
 module.exports = {
   TOPICS,
+  DEFAULT_AGENT,
   getTicketForUser,
   getTicketByOid,
   saveTicket,

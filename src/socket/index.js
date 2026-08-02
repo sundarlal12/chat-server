@@ -1,26 +1,37 @@
 const { verifyToken } = require('../auth');
 const store = require('../store');
-const { createOrGetTicket, insertMessage, markMessagesRead, httpError } = require('../chatLogic');
-const { ticketDoc, messageDoc } = require('../docs');
+const { createOrGetTicket, insertMessage, markMessagesRead, submitRating, httpError } = require('../chatLogic');
+const { rawTicketDoc, createdTicketDoc, socketMessageDoc } = require('../socketDocs');
 
 /**
- * Real-time layer. Event names confirmed via decompiling
- * SupportChatActivity.java's field initializers (this.f7045g0 = "create-ticket",
- * etc.) - the full real vocabulary also includes agent-assigned,
- * submit-rating, incoming-call/call-ended, which are out of scope for this
- * pass (text + file attachments only, per the "Text + file attachments"
- * scope decision - no admin/agent side exists yet either, so
- * agent-assigned has nothing to trigger it).
+ * Real-time layer - rebuilt to match a REAL captured socket.io session
+ * (raw Engine.IO frames from the live app) rather than guessed shapes.
+ * Two things that trace corrected:
  *
- * Connection auth matches the real client's pattern (confirmed in
- * papa776.har): wss://ca-api.papaji.dev/socket.io/?EIO=4&token=...
- * - the token is read from the handshake query string, not a header,
- * since socket.io's browser/OkHttp client can't set custom headers on the
- * initial upgrade the way a plain HTTP client can.
+ * 1. RESPONSE PATTERN: the server does NOT use socket.io ack callbacks.
+ *    It responds to create-ticket/send-message/get-open-ticket/
+ *    submit-rating/stop-typing by emitting the SAME event name back with
+ *    the result (e.g. client emits "send-message", server later emits
+ *    "send-message" again with {success, messageDoc}). Every handler
+ *    below follows that pattern instead of using an ack callback.
  *
- * Room model: one socket.io room per ticket (named by ticketId). Both the
- * customer and (eventually) an assigned agent join the same room, so
- * `io.to(ticketId).emit(...)` reaches whoever's connected on either side.
+ * 2. FIELD NAMES: send-message's request field is `message` (not
+ *    `content`), messageType 1 = text (confirmed from a real "H" text
+ *    message), and the response wraps {success, message, messageDoc,
+ *    isSent} rather than {status, data}.
+ *
+ * Also present in the real trace and added here: `get-open-ticket`,
+ * `submit-rating`, and `user_status_change` (a platform-wide presence
+ * broadcast to every connected socket on connect/disconnect - not scoped
+ * to a ticket room). NOT reproduced: the AI auto-responder ("Ticket
+ * created. AI is responding.") - the STRING is kept for exact response
+ * format, but no AI actually replies, since that's a real backend feature
+ * of its own, not just a message-format detail.
+ *
+ * Room model unchanged: one socket.io room per ticket (named by
+ * ticketId). Both the customer and (eventually) an assigned agent join
+ * the same room, so `io.to(ticketId).emit(...)` reaches whoever's
+ * connected on either side.
  */
 function attachChatSocket(io) {
   io.use(async (socket, next) => {
@@ -33,77 +44,99 @@ function attachChatSocket(io) {
 
   io.on('connection', (socket) => {
     const user = socket.user;
+    const userOid = String(user.oid);
+
+    // Platform-wide presence - confirmed real, broadcast to every OTHER
+    // connected socket (socket.broadcast already excludes the sender).
+    socket.broadcast.emit('user_status_change', { userId: userOid, status: 'online' });
+    socket.on('disconnect', () => {
+      socket.broadcast.emit('user_status_change', { userId: userOid, status: 'offline' });
+    });
 
     // A user only ever has one non-closed ticket at a time (see
-    // createOrGetTicket) - auto-join it on connect so receive-message/
+    // createOrGetTicket) - auto-join it on connect so send-message/
     // typing/etc. reach them without a separate "join room" event.
-    const existingTicket = store.getTicketForUser(String(user.oid));
+    const existingTicket = store.getTicketForUser(userOid);
     if (existingTicket && existingTicket.status !== 'closed') { socket.join(String(existingTicket.oid)); }
 
-    socket.on('create-ticket', async (payload, ack) => {
+    socket.on('get-open-ticket', () => {
+      const ticket = store.getTicketForUser(userOid);
+      const open = ticket && ticket.status !== 'closed' ? ticket : null;
+      socket.emit('get-open-ticket', { success: true, ticket: open ? rawTicketDoc(open) : null });
+    });
+
+    socket.on('create-ticket', async (payload) => {
       try {
         const ticket = await createOrGetTicket(user, payload || {});
         socket.join(String(ticket.oid));
-        const doc = ticketDoc(ticket);
-        io.to(String(ticket.oid)).emit('ticket-updated', doc);
-        if (typeof ack === 'function') { ack({ status: 1, data: doc }); }
+        socket.emit('create-ticket', {
+          success: true,
+          message: 'Ticket created. AI is responding.',
+          ticket: createdTicketDoc(ticket),
+        });
       } catch (e) {
-        sendSocketError(socket, ack, e);
+        socket.emit('create-ticket', { success: false, message: e.httpStatus ? e.message : 'Service temporarily unavailable' });
+        if (!e.httpStatus) { console.error(e); }
       }
     });
 
-    const handleSend = (defaultMessageType) => async (payload, ack) => {
+    socket.on('send-message', async (payload) => {
       try {
         const body = payload || {};
         if (!body.ticketId) { throw httpError(400, 'ticketId is required'); }
         const ticket = store.getTicketByOid(body.ticketId);
         if (!ticket) { throw httpError(404, 'Ticket not found'); }
-        if (body.messageType === undefined) { body.messageType = defaultMessageType; }
 
         const message = await insertMessage(user, ticket, body);
-        const doc = messageDoc(message);
+        const doc = socketMessageDoc(message);
 
-        io.to(String(ticket.oid)).emit('receive-message', doc);
-        socket.emit('message-delivered', { _id: doc._id, ticketId: doc.ticketId, deliveryStatus: 'sent' });
-        if (typeof ack === 'function') { ack({ status: 1, data: doc }); }
+        socket.emit('send-message', { success: true, message: 'Message sent successfully', messageDoc: doc, isSent: true });
+        socket.to(String(ticket.oid)).emit('send-message', { success: true, message: 'Message sent successfully', messageDoc: doc });
       } catch (e) {
-        sendSocketError(socket, ack, e);
+        socket.emit('send-message', { success: false, message: e.httpStatus ? e.message : 'Service temporarily unavailable' });
+        if (!e.httpStatus) { console.error(e); }
       }
-    };
-    socket.on('send-message', handleSend(0));
-    socket.on('send-file-message', handleSend(1));
+    });
 
     socket.on('typing', (payload) => {
       const ticketId = payload?.ticketId;
-      if (ticketId) { socket.to(String(ticketId)).emit('typing', { ticketId, userId: String(user.oid) }); }
-    });
-    socket.on('stop-typing', (payload) => {
-      const ticketId = payload?.ticketId;
-      if (ticketId) { socket.to(String(ticketId)).emit('stop-typing', { ticketId, userId: String(user.oid) }); }
+      if (!ticketId) { return; }
+      socket.to(String(ticketId)).emit('typing', {
+        ticketId, recipientId: payload.recipientId, userName: payload.userName,
+      });
     });
 
-    const handleRead = () => async (payload, ack) => {
+    socket.on('stop-typing', (payload) => {
+      const ticketId = payload?.ticketId;
+      if (!ticketId) { return; }
+      const out = { ticketId, userId: userOid, recipientId: payload.recipientId, success: true };
+      socket.emit('stop-typing', out);
+      socket.to(String(ticketId)).emit('stop-typing', out);
+    });
+
+    socket.on('all-message-read', async (payload) => {
       try {
         const ticketId = payload?.ticketId;
         if (!ticketId) { throw httpError(400, 'ticketId is required'); }
-        const updated = await markMessagesRead(user, ticketId);
-        io.to(String(ticketId)).emit('message-status-update', { ticketId, readBy: String(user.oid), updated });
-        if (typeof ack === 'function') { ack({ status: 1, updated }); }
+        await markMessagesRead(user, ticketId);
+        socket.emit('all-message-read', { success: true, ticketId });
       } catch (e) {
-        sendSocketError(socket, ack, e);
+        socket.emit('all-message-read', { success: false, message: e.httpStatus ? e.message : 'Service temporarily unavailable' });
+        if (!e.httpStatus) { console.error(e); }
       }
-    };
-    socket.on('message-read', handleRead());
-    socket.on('all-message-read', handleRead());
-  });
-}
+    });
 
-function sendSocketError(socket, ack, e) {
-  const status = e && e.httpStatus ? e.httpStatus : 500;
-  const message = e && e.httpStatus ? e.message : 'Service temporarily unavailable';
-  if (!(e && e.httpStatus)) { console.error(e); }
-  if (typeof ack === 'function') { ack({ status: 0, code: status, message }); }
-  else { socket.emit('error', { code: status, message }); }
+    socket.on('submit-rating', async (payload) => {
+      try {
+        const ticket = await submitRating(user, payload || {});
+        io.to(String(ticket.oid)).emit('ticket-updated', { ticketId: String(ticket.oid), status: ticket.status });
+        socket.emit('submit-rating', { success: true, message: 'Rating submitted successfully' });
+      } catch (e) {
+        socket.emit('submit-rating', { success: false, message: e.httpStatus ? e.message : 'Service temporarily unavailable' });
+        if (!e.httpStatus) { console.error(e); }
+      }
+    });
+  });
 }
 
 module.exports = { attachChatSocket };

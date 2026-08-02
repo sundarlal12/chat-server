@@ -1,6 +1,6 @@
 const express = require('express');
 const { requireAuth } = require('../auth');
-const { createOrGetTicket, insertMessage, markMessagesRead } = require('../chatLogic');
+const { createOrGetTicket, insertMessage, markMessagesRead, submitRating } = require('../chatLogic');
 const { ticketDoc, messageDoc } = require('../docs');
 const store = require('../store');
 
@@ -39,6 +39,16 @@ router.post('/mark-messages-read', requireAuth(), async (req, res) => {
     if (!body.ticketId) { return res.status(400).json({ code: 400, message: 'ticketId is required' }); }
     const updated = await markMessagesRead(req.chatUser, body.ticketId);
     res.json({ status: 1, message: 'Messages marked as read', result: { updated } });
+  } catch (e) { handleError(res, e); }
+});
+
+/** POST /v1/api/submit-rating - REST equivalent of the submit-rating socket event. */
+router.post('/submit-rating', requireAuth(), async (req, res) => {
+  try {
+    const body = req.body || {};
+    if (!body.ticketId) { return res.status(400).json({ code: 400, message: 'ticketId is required' }); }
+    await submitRating(req.chatUser, body);
+    res.json({ status: 1, message: 'Rating submitted successfully' });
   } catch (e) { handleError(res, e); }
 });
 
