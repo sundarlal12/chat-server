@@ -1,6 +1,6 @@
 const { newObjectId, isObjectId } = require('./helpers');
 const store = require('./store');
-const { KIND_TO_MESSAGE_TYPE } = require('./attachmentPolicy');
+const { KIND_TO_MESSAGE_TYPE, classify, sniffKind } = require('./attachmentPolicy');
 
 /**
  * If the caller didn't explicitly say what kind of message this is, but
@@ -42,6 +42,73 @@ function normalizeFileMessageItem(body) {
     attachmentName: b.attachmentName || b.fileName || '',
     attachmentSize: b.attachmentSize !== undefined ? b.attachmentSize : b.fileSize,
     duration: b.duration !== undefined ? b.duration : b.mediaDuration,
+  };
+}
+
+const BASE64_KEYS = [
+  'fileBase64', 'base64', 'fileData', 'data', 'file', 'attachment', 'media',
+  'attachmentBase64', 'imageBase64', 'audioBase64', 'videoBase64', 'voiceBase64', 'base64Data',
+];
+
+/**
+ * Best-effort inline-attachment support: the app MAY send the raw file as
+ * base64 directly in the send-file-message payload instead of a two-step
+ * "upload via REST, then reference the URL" flow (a real possibility -
+ * the one send-file-message request payload recoverable from decompiled
+ * bytecode had only {recipientId, ticketId, messageType}, no URL field at
+ * all, which a base64-in-the-socket-payload design would explain). Tries
+ * every plausible field name, accepts a raw base64 string OR a
+ * `data:<mime>;base64,...` URL, and classifies the decoded bytes by the
+ * given mimetype/filename first, falling back to magic-byte sniffing.
+ */
+function extractInlineBase64(raw) {
+  for (const key of BASE64_KEYS) {
+    const v = raw[key];
+    // 40 chars is a deliberately low floor (~30 raw bytes) - real photos/
+    // audio are always far bigger than this, but a tiny test image or a
+    // 1-frame voice note shouldn't be misclassified as "not base64" and
+    // silently ignored the way an arbitrarily high threshold would.
+    if (typeof v !== 'string' || v.length < 40) { continue; }
+    const dataUrlMatch = v.match(/^data:([^;]+);base64,([\s\S]*)$/);
+    if (dataUrlMatch) { return { mimeHint: dataUrlMatch[1], data: dataUrlMatch[2] }; }
+    if (/^[A-Za-z0-9+/=\s]+$/.test(v.slice(0, 200))) {
+      return { mimeHint: raw.mimeType || raw.contentType || raw.fileType || raw.attachmentType || null, data: v };
+    }
+  }
+  return null;
+}
+
+async function resolveInlineAttachment(user, raw) {
+  const found = extractInlineBase64(raw || {});
+  if (!found) { return null; }
+
+  let buffer;
+  try { buffer = Buffer.from(found.data.replace(/\s/g, ''), 'base64'); } catch { return null; }
+  if (!buffer.length) { return null; }
+
+  const fileName = raw.fileName || raw.attachmentName || '';
+  const match = (found.mimeHint && classify(found.mimeHint, fileName)) || sniffKind(buffer);
+  if (!match) { return null; }
+
+  const oid = newObjectId();
+  await store.insertAttachment({
+    oid,
+    uploader_oid: String(user.oid),
+    original_name: fileName || `file${match.exts[0]}`,
+    mime_type: match.mimetypes[0],
+    size_bytes: buffer.length,
+    data: buffer,
+  });
+
+  const base = process.env.PUBLIC_BASE_URL || '';
+  if (!base) { console.warn('resolveInlineAttachment: PUBLIC_BASE_URL is not set - attachment URL will be relative and likely unusable by the app'); }
+
+  return {
+    attachmentUrl: `${base}/v1/api/chat-attachment/${oid}`,
+    attachmentType: match.kind,
+    attachmentName: fileName,
+    attachmentSize: buffer.length,
+    messageType: match.messageType,
   };
 }
 
@@ -227,5 +294,5 @@ function httpError(status, message) {
 
 module.exports = {
   createOrGetTicket, insertMessage, insertAdminMessage, markMessagesRead, submitRating, httpError,
-  normalizeFileMessageItem,
+  normalizeFileMessageItem, resolveInlineAttachment,
 };

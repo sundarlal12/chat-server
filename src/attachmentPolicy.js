@@ -35,4 +35,24 @@ function classify(mimetype, originalname) {
 
 const ALLOWED_DESCRIPTION = 'images (jpg, png, gif), video (mp4), audio (mp3), or a recorded voice note';
 
-module.exports = { classify, KIND_TO_MESSAGE_TYPE, ALLOWED_DESCRIPTION };
+/**
+ * Magic-byte sniff, used when a socket-sent attachment arrives as inline
+ * base64 data with no reliable mimetype/extension hint alongside it (see
+ * chatLogic.js's resolveInlineAttachment - the send-file-message socket
+ * event may embed the file directly rather than referencing an
+ * already-uploaded URL). Only covers the formats this policy allows.
+ */
+function sniffKind(buffer) {
+  if (!buffer || buffer.length < 4) { return null; }
+  const b = buffer;
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) { return ALLOWED.find((a) => a.mimetypes.includes('image/jpeg')); }
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) { return ALLOWED.find((a) => a.mimetypes.includes('image/png')); }
+  if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) { return ALLOWED.find((a) => a.mimetypes.includes('image/gif')); }
+  if (b.length > 11 && b.slice(4, 8).toString('ascii') === 'ftyp') { return ALLOWED.find((a) => a.mimetypes.includes('video/mp4')); }
+  if ((b[0] === 0x49 && b[1] === 0x44 && b[2] === 0x33) || (b[0] === 0xff && (b[1] & 0xe0) === 0xe0)) { return ALLOWED.find((a) => a.mimetypes.includes('audio/mpeg')); }
+  if (b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) { return ALLOWED.find((a) => a.mimetypes.includes('audio/webm')); }
+  if (b.slice(0, 4).toString('ascii') === 'OggS') { return ALLOWED.find((a) => a.mimetypes.includes('audio/ogg')); }
+  return null;
+}
+
+module.exports = { classify, sniffKind, KIND_TO_MESSAGE_TYPE, ALLOWED_DESCRIPTION };

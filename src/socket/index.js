@@ -3,7 +3,7 @@ const { verifyAdminToken } = require('../adminAuth');
 const store = require('../store');
 const {
   createOrGetTicket, insertMessage, insertAdminMessage, markMessagesRead, submitRating, httpError,
-  normalizeFileMessageItem,
+  normalizeFileMessageItem, resolveInlineAttachment,
 } = require('../chatLogic');
 const { rawTicketDoc, createdTicketDoc, socketMessageDoc, chatMessageEventName } = require('../socketDocs');
 
@@ -152,7 +152,14 @@ function attachChatSocket(io) {
       const items = Array.isArray(payload) ? payload : [payload];
       for (const raw of items) {
         try {
-          const body = normalizeFileMessageItem(raw || {});
+          let body = normalizeFileMessageItem(raw || {});
+          // No URL-shaped field found - the app may be sending the file
+          // itself as inline base64 instead of a pre-uploaded URL (see
+          // resolveInlineAttachment's comment for why that's plausible).
+          if (!body.attachmentUrl) {
+            const inline = await resolveInlineAttachment(user, raw || {});
+            if (inline) { body = { ...body, ...inline }; }
+          }
           if (!body.ticketId) { throw httpError(400, 'ticketId is required'); }
           const ticket = await store.getTicketByOid(body.ticketId);
           if (!ticket) { throw httpError(404, 'Ticket not found'); }
