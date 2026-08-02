@@ -9,6 +9,7 @@ const topicsRoute = require('./src/routes/topics');
 const chatDataRoute = require('./src/routes/chatData');
 const ticketsRoute = require('./src/routes/tickets');
 const { attachChatSocket } = require('./src/socket');
+const { dbOne } = require('./src/db');
 
 for (const key of ['JWT_SECRET', 'DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME']) {
   if (!process.env[key]) {
@@ -29,6 +30,33 @@ app.use(cors({ origin: '*', methods: ['GET', 'POST', 'OPTIONS'] }));
 app.use(express.json());
 
 app.get('/', (req, res) => res.status(200).send('papa777 chat service'));
+
+/**
+ * Separates "is the process alive" from "can it actually reach MySQL" -
+ * added after a real deploy showed a generic 500 with no way to tell
+ * which of those two had failed. Reports the raw DB driver error CODE
+ * (e.g. ETIMEDOUT/ECONNREFUSED/ENOTFOUND/ER_ACCESS_DENIED_ERROR), which is
+ * diagnostic but not a credential - safe to expose here.
+ */
+app.get('/health', async (req, res) => {
+  const result = { status: 'ok', db: 'unknown' };
+  try {
+    await dbOne('SELECT 1 AS ok');
+    result.db = 'connected';
+    return res.json(result);
+  } catch (e) {
+    // Deliberately NOT including e.sqlMessage/e.message here - for an
+    // access-denied error that text includes the DB username, which
+    // shouldn't be exposed on a public, unauthenticated endpoint. The
+    // error code alone (ETIMEDOUT/ECONNREFUSED/ENOTFOUND/
+    // ER_ACCESS_DENIED_ERROR/...) is enough to diagnose which of
+    // network-reachability/credentials/DNS is the problem.
+    result.status = 'degraded';
+    result.db = 'error';
+    result.dbErrorCode = e.code || null;
+    return res.status(503).json(result);
+  }
+});
 
 // Routes are mounted directly under /v1/api, matching the app's real request
 // paths exactly (GET/POST https://ca-api.papa777.sbs/v1/api/get-all-topics etc).
