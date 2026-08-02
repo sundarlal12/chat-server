@@ -25,7 +25,7 @@ router.post('/send-message', requireAuth(), async (req, res) => {
   try {
     const body = req.body || {};
     if (!body.ticketId) { return res.status(400).json({ code: 400, message: 'ticketId is required' }); }
-    const ticket = store.getTicketByOid(body.ticketId);
+    const ticket = await store.getTicketByOid(body.ticketId);
     if (!ticket) { return res.status(404).json({ code: 404, message: 'Ticket not found' }); }
     const message = await insertMessage(req.chatUser, ticket, body);
     res.json({ status: 1, data: messageDoc(message), message: 'Message sent successfully' });

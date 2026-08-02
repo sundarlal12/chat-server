@@ -8,14 +8,22 @@ const { Server } = require('socket.io');
 const topicsRoute = require('./src/routes/topics');
 const chatDataRoute = require('./src/routes/chatData');
 const ticketsRoute = require('./src/routes/tickets');
+const attachmentsRoute = require('./src/routes/attachments');
 const { attachChatSocket } = require('./src/socket');
+const { migrate } = require('./migrate');
 
-// No database, so the only hard dependency is knowing where the PHP API
-// lives (auth and display-name lookups both delegate there - see
-// src/auth.js/src/phpApi.js for why there's no JWT_SECRET or DB_* here at
-// all anymore).
+// PHP_API_BASE_URL: auth and display-name lookups delegate to the PHP API
+// (see src/auth.js/src/phpApi.js) - no JWT_SECRET needed here.
+// DB connection: either MYSQL_URL/MYSQL_PUBLIC_URL/DATABASE_URL, or the
+// discrete DB_HOST/DB_USER/DB_PASSWORD/DB_NAME - see src/db.js.
 if (!process.env.PHP_API_BASE_URL) {
   console.error('Missing required env var: PHP_API_BASE_URL - see .env.example');
+  process.exit(1);
+}
+const hasDbUrl = !!(process.env.MYSQL_URL || process.env.MYSQL_PUBLIC_URL || process.env.DATABASE_URL);
+const hasDbParts = !!(process.env.DB_HOST && process.env.DB_USER && process.env.DB_NAME);
+if (!hasDbUrl && !hasDbParts) {
+  console.error('Missing DB config - set MYSQL_URL (Railway MySQL plugin) or DB_HOST/DB_USER/DB_PASSWORD/DB_NAME - see .env.example');
   process.exit(1);
 }
 
@@ -38,6 +46,7 @@ app.get('/health', (req, res) => res.json({ status: 'ok' }));
 app.use('/v1/api', topicsRoute);
 app.use('/v1/api', chatDataRoute);
 app.use('/v1/api', ticketsRoute);
+app.use('/v1/api', attachmentsRoute);
 
 app.use((req, res) => res.status(404).json({ code: 404, message: 'Not found' }));
 
@@ -63,6 +72,15 @@ const io = new Server(httpServer, {
 attachChatSocket(io);
 
 const port = Number(process.env.PORT || 3000);
-httpServer.listen(port, () => {
-  console.log(`papa777 chat service listening on :${port}`);
-});
+
+// Idempotent - safe to run on every startup/deploy (see migrate.js).
+migrate()
+  .then(() => {
+    httpServer.listen(port, () => {
+      console.log(`papa777 chat service listening on :${port}`);
+    });
+  })
+  .catch((e) => {
+    console.error('Migration failed, not starting:', e);
+    process.exit(1);
+  });

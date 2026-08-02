@@ -9,9 +9,8 @@ const router = express.Router();
 /**
  * GET /v1/api/get-chat-data-of-recent-ticket?page=&limit=10
  * See api/v1/api/get-chat-data-of-recent-ticket.php's header comment for
- * the full decompiled-model contract this matches. No database - reads
- * from the in-memory store (see store.js), so this only reflects messages
- * sent since the server process last started.
+ * the full decompiled-model contract this matches. Backed by MySQL (see
+ * store.js/migrate.js).
  */
 router.get('/get-chat-data-of-recent-ticket', requireAuth(), asyncRoute(async (req, res) => {
   const user = req.chatUser;
@@ -20,7 +19,7 @@ router.get('/get-chat-data-of-recent-ticket', requireAuth(), asyncRoute(async (r
   if (limit <= 0 || limit > 100) { limit = 10; }
   const offset = (page - 1) * limit;
 
-  const ticketRow = store.getTicketForUser(String(user.oid));
+  const ticketRow = await store.getTicketForUser(String(user.oid));
 
   let ticket = null;
   let messages = [];
@@ -29,12 +28,13 @@ router.get('/get-chat-data-of-recent-ticket', requireAuth(), asyncRoute(async (r
   if (ticketRow) {
     ticket = ticketDoc(ticketRow);
 
-    // Store keeps messages oldest-first; the real contract returns
-    // newest-first (the client reverses it on receipt - see
-    // api/v1/api/get-chat-data-of-recent-ticket.php's header comment).
-    const all = store.getMessages(String(ticketRow.oid)).slice().reverse();
-    const totalMessages = all.length;
-    messages = all.slice(offset, offset + limit).map(messageDoc);
+    // Real contract returns newest-first (the client reverses it on
+    // receipt - see api/v1/api/get-chat-data-of-recent-ticket.php's
+    // header comment) - store.getMessages with limit/offset already
+    // queries in that order.
+    const totalMessages = await store.countMessages(String(ticketRow.oid));
+    const rows = await store.getMessages(String(ticketRow.oid), { limit, offset });
+    messages = rows.map(messageDoc);
 
     pagination = {
       page,

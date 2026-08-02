@@ -7,8 +7,8 @@ const router = express.Router();
 
 /**
  * GET /v1/api/get-all-topics
- * Confirmed via a real capture in papa776.har - see store.js's TOPICS
- * (there's no database, so this list is fixed rather than queried).
+ * Confirmed via a real capture in papa776.har - the 3 topics are seeded
+ * into chat_topics by migrate.js with their real oids/timestamps.
  */
 router.get('/get-all-topics', asyncRoute(async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
@@ -16,8 +16,9 @@ router.get('/get-all-topics', asyncRoute(async (req, res) => {
   if (limit <= 0 || limit > 100) { limit = 10; }
   const offset = (page - 1) * limit;
 
-  const total = store.TOPICS.length;
-  const rows = store.TOPICS.slice(offset, offset + limit);
+  const all = await store.getTopics();
+  const total = all.length;
+  const rows = all.slice(offset, offset + limit);
 
   const totalPages = limit > 0 ? Math.max(1, Math.ceil(total / limit)) : 1;
   res.json({

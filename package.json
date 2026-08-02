@@ -1,19 +1,22 @@
 {
   "name": "papa777-chat-service",
   "version": "1.0.0",
-  "description": "Node.js/socket.io real-time chat backend for ca-api.papa777.sbs - REST endpoints + websocket events, in-memory only (no database), auth delegated to the PHP API.",
+  "description": "Node.js/socket.io real-time chat backend for ca-api.papa777.sbs - REST endpoints + websocket events, MySQL-backed (Railway), auth delegated to the PHP API.",
   "main": "server.js",
   "type": "commonjs",
   "engines": {
     "node": ">=18"
   },
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "migrate": "node migrate.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "multer": "^2.2.0",
+    "mysql2": "^3.10.2",
     "socket.io": "^4.7.5"
   }
 }

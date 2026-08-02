@@ -70,7 +70,7 @@ function socketMessageDoc(m) {
     attachmentSize: Number(m.attachment_size || 0),
     duration: Number(m.duration || 0),
     deliveryStatus: m.delivery_status || 'delivered',
-    mentionIds: Array.isArray(m.mention_ids) ? m.mention_ids : [],
+    mentionIds: parseMentionIds(m.mention_ids),
     _id: m.oid,
     createdAt: iso(m.created_at),
     updatedAt: iso(m.updated_at),
@@ -78,6 +78,18 @@ function socketMessageDoc(m) {
     attachmentUrl: m.attachment_url || null,
     videoImage: m.video_image || null,
   };
+}
+
+/** mention_ids is stored as a JSON text column - parse it back into an array. */
+function parseMentionIds(raw) {
+  if (Array.isArray(raw)) { return raw; }
+  if (typeof raw !== 'string' || raw === '') { return []; }
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 module.exports = { rawTicketDoc, createdTicketDoc, socketMessageDoc };

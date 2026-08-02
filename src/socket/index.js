@@ -56,13 +56,19 @@ function attachChatSocket(io) {
     // A user only ever has one non-closed ticket at a time (see
     // createOrGetTicket) - auto-join it on connect so send-message/
     // typing/etc. reach them without a separate "join room" event.
-    const existingTicket = store.getTicketForUser(userOid);
-    if (existingTicket && existingTicket.status !== 'closed') { socket.join(String(existingTicket.oid)); }
+    store.getTicketForUser(userOid)
+      .then((t) => { if (t && t.status !== 'closed') { socket.join(String(t.oid)); } })
+      .catch((e) => console.error('auto-join failed', e));
 
-    socket.on('get-open-ticket', () => {
-      const ticket = store.getTicketForUser(userOid);
-      const open = ticket && ticket.status !== 'closed' ? ticket : null;
-      socket.emit('get-open-ticket', { success: true, ticket: open ? rawTicketDoc(open) : null });
+    socket.on('get-open-ticket', async () => {
+      try {
+        const ticket = await store.getTicketForUser(userOid);
+        const open = ticket && ticket.status !== 'closed' ? ticket : null;
+        socket.emit('get-open-ticket', { success: true, ticket: open ? rawTicketDoc(open) : null });
+      } catch (e) {
+        console.error(e);
+        socket.emit('get-open-ticket', { success: false, message: 'Service temporarily unavailable' });
+      }
     });
 
     socket.on('create-ticket', async (payload) => {
@@ -84,7 +90,7 @@ function attachChatSocket(io) {
       try {
         const body = payload || {};
         if (!body.ticketId) { throw httpError(400, 'ticketId is required'); }
-        const ticket = store.getTicketByOid(body.ticketId);
+        const ticket = await store.getTicketByOid(body.ticketId);
         if (!ticket) { throw httpError(404, 'Ticket not found'); }
 
         const message = await insertMessage(user, ticket, body);
