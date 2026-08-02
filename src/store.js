@@ -13,14 +13,19 @@ const { mysqlNow } = require('./helpers');
 // immediately (confirmed via a real captured socket.io trace - "assignedTo"
 // is already populated in the create-ticket response, before any human/AI
 // has actually replied). No admin panel exists yet to pick a real agent,
-// so this is a fixed placeholder identity - override via env vars once a
-// real agent/admin system exists.
-const DEFAULT_AGENT = {
-  oid: process.env.DEFAULT_AGENT_ID || '69d37240ec8077df95971617',
-  userName: process.env.DEFAULT_AGENT_USERNAME || 'sangeetha',
-  fullName: process.env.DEFAULT_AGENT_FULLNAME || 'Support Executive',
-  profilePic: '',
-};
+// so this is a fixed placeholder ROUTING identity (the oid every ticket's
+// recipient_oid/receiver_oid uses) - override via env var once a real
+// agent/admin system exists.
+const DEFAULT_AGENT_OID = process.env.DEFAULT_AGENT_ID || '69d37240ec8077df95971617';
+
+// The DISPLAY name shown for that identity is picked at random per ticket
+// (by explicit operator request) so different conversations don't all
+// show the same fixed agent name - picked once at ticket creation and
+// stored on the ticket, not re-randomized per message.
+const AGENT_NAME_POOL = ['Sangeeta', 'Kweeta', 'Pari', 'Parul', 'PAPA777'];
+function pickAgentName() {
+  return AGENT_NAME_POOL[Math.floor(Math.random() * AGENT_NAME_POOL.length)];
+}
 
 async function getTopics() {
   return dbAll('SELECT * FROM chat_topics ORDER BY sort_order ASC, id ASC');
@@ -88,11 +93,13 @@ async function insertMessageRow(m) {
   await dbExec(
     `INSERT INTO chat_messages
        (oid,ticket_oid,sender_oid,sender_name,sender_full_name,sender_profile_pic,
-        receiver_oid,content,caption,message_type,read_status,delivery_status,
+        receiver_oid,receiver_name,receiver_full_name,receiver_profile_pic,
+        content,caption,message_type,read_status,delivery_status,
         attachment_url,attachment_type,attachment_name,attachment_size,duration,
         mention_ids,video_image,created_at,updated_at)
      VALUES (:oid,:ticket_oid,:sender_oid,:sender_name,:sender_full_name,:sender_profile_pic,
-             :receiver_oid,:content,:caption,:message_type,0,:delivery_status,
+             :receiver_oid,:receiver_name,:receiver_full_name,:receiver_profile_pic,
+             :content,:caption,:message_type,0,:delivery_status,
              :attachment_url,:attachment_type,:attachment_name,:attachment_size,:duration,
              :mention_ids,:video_image,:now,:now)`,
     { ...m, now }
@@ -122,7 +129,8 @@ async function getAttachment(oid) {
 }
 
 module.exports = {
-  DEFAULT_AGENT,
+  DEFAULT_AGENT_OID,
+  pickAgentName,
   getTopics,
   getTopicByOid,
   getTicketForUser,

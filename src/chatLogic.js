@@ -26,8 +26,12 @@ async function createOrGetTicket(user, { topicId }) {
 
   // The real server auto-generates subject/description from the topic name
   // and doesn't take them from the client at all (confirmed - create-ticket
-  // requests only ever carry {topicId}).
+  // requests only ever carry {topicId}). The agent's display name is
+  // randomized per ticket (operator request) so different conversations
+  // don't all show the same fixed name - the underlying oid (used for
+  // routing/receiver_oid) stays constant, only the shown name varies.
   const topicName = topic ? topic.name : 'General';
+  const agentName = store.pickAgentName();
   return store.insertTicket({
     oid: newObjectId(),
     user_oid: String(user.oid),
@@ -37,25 +41,11 @@ async function createOrGetTicket(user, { topicId }) {
     status: 'open',
     priority: 'medium',
     is_ai_handled: 0,
-    recipient_oid: store.DEFAULT_AGENT.oid,
-    agent_name: store.DEFAULT_AGENT.userName,
-    agent_full_name: store.DEFAULT_AGENT.fullName,
-    agent_profile_pic: store.DEFAULT_AGENT.profilePic,
+    recipient_oid: store.DEFAULT_AGENT_OID,
+    agent_name: agentName,
+    agent_full_name: agentName,
+    agent_profile_pic: '',
   });
-}
-
-/** Resolves a recipientId to display info - the default agent if it matches, otherwise unknown (no user directory to look up an arbitrary id against). */
-function resolveRecipient(recipientOid) {
-  if (!recipientOid) { return null; }
-  if (recipientOid === store.DEFAULT_AGENT.oid) {
-    return {
-      oid: store.DEFAULT_AGENT.oid,
-      userName: store.DEFAULT_AGENT.userName,
-      fullName: store.DEFAULT_AGENT.fullName,
-      profilePic: store.DEFAULT_AGENT.profilePic,
-    };
-  }
-  return { oid: recipientOid, userName: '', fullName: '', profilePic: '' };
 }
 
 async function insertMessage(user, ticket, body) {
@@ -72,6 +62,15 @@ async function insertMessage(user, ticket, body) {
   const senderName = String(user.name || '');
   const senderFull = user.firstName ? `${user.firstName} ${user.lastName || ''}`.trim() : senderName;
 
+  // Receiver display name/pic come from the TICKET's own randomized agent
+  // identity (not a global constant) when the recipient is that ticket's
+  // assigned agent - keeps every message in a conversation showing the
+  // same agent name that ticket was created with.
+  const isTicketAgent = recipientId && recipientId === String(ticket.recipient_oid || '');
+  const receiverName = isTicketAgent ? String(ticket.agent_name || '') : '';
+  const receiverFullName = isTicketAgent ? String(ticket.agent_full_name || '') : '';
+  const receiverProfilePic = isTicketAgent ? String(ticket.agent_profile_pic || '') : '';
+
   const message = await store.insertMessageRow({
     oid: newObjectId(),
     ticket_oid: String(ticket.oid),
@@ -80,6 +79,9 @@ async function insertMessage(user, ticket, body) {
     sender_full_name: senderFull,
     sender_profile_pic: String(user.profilePic || ''),
     receiver_oid: recipientId || null,
+    receiver_name: receiverName,
+    receiver_full_name: receiverFullName,
+    receiver_profile_pic: receiverProfilePic,
     content,
     caption: (body.caption || '').trim(),
     message_type: messageType,
@@ -130,4 +132,4 @@ function httpError(status, message) {
   return e;
 }
 
-module.exports = { createOrGetTicket, insertMessage, markMessagesRead, submitRating, resolveRecipient, httpError };
+module.exports = { createOrGetTicket, insertMessage, markMessagesRead, submitRating, httpError };

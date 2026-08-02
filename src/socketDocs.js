@@ -1,5 +1,4 @@
 const { iso } = require('./helpers');
-const { resolveRecipient } = require('./chatLogic');
 
 /**
  * Doc shapes for the RAW socket.io protocol - confirmed against a real
@@ -58,8 +57,12 @@ function socketMessageDoc(m) {
   const sender = m.sender_oid ? {
     _id: m.sender_oid, userName: m.sender_name || '', profilePic: m.sender_profile_pic || '', fullName: m.sender_full_name || '',
   } : null;
-  const recv = resolveRecipient(m.receiver_oid);
-  const receiver = recv ? { _id: recv.oid, userName: recv.userName, profilePic: recv.profilePic, fullName: recv.fullName } : null;
+  // Receiver display info is denormalized onto the message row at insert
+  // time from the ticket's own (randomized-per-ticket) agent identity -
+  // see chatLogic.js's insertMessage - rather than resolved here.
+  const receiver = m.receiver_oid ? {
+    _id: m.receiver_oid, userName: m.receiver_name || '', profilePic: m.receiver_profile_pic || '', fullName: m.receiver_full_name || '',
+  } : null;
 
   return {
     sender,

@@ -18,6 +18,17 @@ async function createTableIfMissing(name, ddl) {
   console.log(`+ created table ${name}`);
 }
 
+/** ALTER TABLE ADD COLUMN, but only if it's not already there - safe to run against a table that already has real data. */
+async function ensureColumn(table, column, definition) {
+  const [rows] = await pool.query(
+    `SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+    [table, column]
+  );
+  if (rows[0].n > 0) { return; }
+  await pool.query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`);
+  console.log(`+ added column ${table}.${column}`);
+}
+
 async function migrate() {
   await createTableIfMissing('chat_topics', `
     CREATE TABLE chat_topics (
@@ -69,6 +80,9 @@ async function migrate() {
       sender_full_name VARCHAR(120) NOT NULL DEFAULT '',
       sender_profile_pic VARCHAR(512) NOT NULL DEFAULT '',
       receiver_oid CHAR(24) NULL,
+      receiver_name VARCHAR(120) NOT NULL DEFAULT '',
+      receiver_full_name VARCHAR(120) NOT NULL DEFAULT '',
+      receiver_profile_pic VARCHAR(512) NOT NULL DEFAULT '',
       content TEXT NOT NULL,
       caption VARCHAR(500) NOT NULL DEFAULT '',
       message_type INT NOT NULL DEFAULT 1,
@@ -86,6 +100,13 @@ async function migrate() {
       UNIQUE KEY uq_chat_messages_oid (oid),
       KEY idx_chat_messages_ticket (ticket_oid, created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+  // Added after chat_messages already had real data in production - a
+  // fresh install gets these from the CREATE TABLE above, an existing
+  // table gets them bolted on here without touching existing rows.
+  await ensureColumn('chat_messages', 'receiver_name', "VARCHAR(120) NOT NULL DEFAULT ''");
+  await ensureColumn('chat_messages', 'receiver_full_name', "VARCHAR(120) NOT NULL DEFAULT ''");
+  await ensureColumn('chat_messages', 'receiver_profile_pic', "VARCHAR(512) NOT NULL DEFAULT ''");
 
   await createTableIfMissing('chat_attachments', `
     CREATE TABLE chat_attachments (
