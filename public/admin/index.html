@@ -85,7 +85,8 @@
   .msg.in { align-self: flex-start; background: #1c2028; border-bottom-left-radius: 2px; }
   .msg.out { align-self: flex-end; background: #4f7cff; color: white; border-bottom-right-radius: 2px; }
   .msg .time { display: block; font-size: 10px; opacity: 0.65; margin-top: 4px; }
-  .msg img.att { max-width: 220px; border-radius: 6px; display: block; margin-top: 6px; }
+  .msg img.att, .msg video.att { max-width: 220px; border-radius: 6px; display: block; margin-top: 6px; }
+  .msg audio { display: block; margin-top: 6px; max-width: 220px; }
   .msg a.att-link { display: inline-block; margin-top: 6px; font-size: 12px; color: inherit; text-decoration: underline; }
 
   #composer { border-top: 1px solid #262b36; padding: 10px 14px; display: flex; gap: 8px; align-items: flex-end; }
@@ -277,7 +278,7 @@
       <div id="pending-file"></div>
       <div id="composer">
         <label class="icon-btn" for="file-input">📎</label>
-        <input id="file-input" type="file" class="hidden" />
+        <input id="file-input" type="file" class="hidden" accept="image/jpeg,image/png,image/gif,video/mp4,audio/mpeg" />
         <textarea id="msg-input" placeholder="Type a reply…" rows="1"></textarea>
         <button id="send-btn" class="primary">Send</button>
       </div>`;
@@ -321,8 +322,21 @@
     el.className = 'msg ' + (isOutgoing ? 'out' : 'in');
     let html = m.content ? escapeHtml(m.content) : '';
     if (m.attachmentUrl) {
-      const imgId = 'img_' + Math.random().toString(36).slice(2);
-      html += `<img class="att" id="${imgId}" src="${escapeHtml(m.attachmentUrl)}" onerror="document.getElementById('${imgId}').outerHTML='<a class=att-link href=&quot;${escapeHtml(m.attachmentUrl)}&quot; target=_blank rel=noopener>📎 Download attachment</a>'" />`;
+      const url = escapeHtml(m.attachmentUrl);
+      // attachmentType (image/video/audio) is only present on messages
+      // fetched via REST history - the raw socket.io broadcast doesn't
+      // carry it (matches the real captured protocol), so a live-arriving
+      // attachment falls back to trying <img> first and swapping to a
+      // download link on error, which still ends up correct for images
+      // and degrades gracefully for anything else.
+      if (m.attachmentType === 'video') {
+        html += `<video class="att" src="${url}" controls></video>`;
+      } else if (m.attachmentType === 'audio') {
+        html += `<audio src="${url}" controls></audio>`;
+      } else {
+        const imgId = 'img_' + Math.random().toString(36).slice(2);
+        html += `<img class="att" id="${imgId}" src="${url}" onerror="document.getElementById('${imgId}').outerHTML='<a class=att-link href=&quot;${url}&quot; target=_blank rel=noopener>📎 Download attachment</a>'" />`;
+      }
     }
     html += `<span class="time">${new Date(m.createdAt).toLocaleString()}</span>`;
     el.innerHTML = html;

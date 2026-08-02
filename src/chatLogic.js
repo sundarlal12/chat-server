@@ -1,5 +1,28 @@
 const { newObjectId, isObjectId } = require('./helpers');
 const store = require('./store');
+const { KIND_TO_MESSAGE_TYPE } = require('./attachmentPolicy');
+
+/**
+ * If the caller didn't explicitly say what kind of message this is, but
+ * did attach a file, infer messageType from the attachment's kind (the
+ * upload response's attachmentType - "image"/"video"/"audio") rather than
+ * defaulting to 1 (text). The exact int values (2=image, 3=video,
+ * 4=document, 5=audio) come straight out of the real app's own decompiled
+ * ChatAdapter, which picks which message layout to render PURELY off this
+ * number - sending 1/text for an attachment message (the admin panel's
+ * original bug) means the app never shows it at all, not even as a broken
+ * image, since it renders the TEXT layout instead.
+ */
+function resolveMessageType(body) {
+  if (body.messageType !== undefined && body.messageType !== null && body.messageType !== '') {
+    return Number(body.messageType);
+  }
+  const attachmentUrl = (body.attachmentUrl || '').trim();
+  if (attachmentUrl) {
+    return KIND_TO_MESSAGE_TYPE[body.attachmentType] || 4;
+  }
+  return 1;
+}
 
 /**
  * Shared chat logic used by both the REST routes and the socket.io event
@@ -56,7 +79,7 @@ async function createOrGetTicket(user, { topicId }) {
 async function insertMessage(user, ticket, body) {
   const content = (body.message || body.content || '').trim();
   const recipientId = (body.recipientId || ticket.recipient_oid || '').trim();
-  const messageType = body.messageType !== undefined && body.messageType !== null ? Number(body.messageType) : 1;
+  const messageType = resolveMessageType(body);
   const attachmentUrl = (body.attachmentUrl || '').trim();
 
   if (!content && !attachmentUrl) { throw httpError(400, 'message is required'); }
@@ -117,7 +140,7 @@ async function insertMessage(user, ticket, body) {
  */
 async function insertAdminMessage(admin, ticket, body) {
   const content = (body.message || body.content || '').trim();
-  const messageType = body.messageType !== undefined && body.messageType !== null ? Number(body.messageType) : 1;
+  const messageType = resolveMessageType(body);
   const attachmentUrl = (body.attachmentUrl || '').trim();
 
   if (!content && !attachmentUrl) { throw httpError(400, 'message is required'); }

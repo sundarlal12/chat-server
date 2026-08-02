@@ -8,8 +8,22 @@ const { socketMessageDoc } = require('../socketDocs');
 const { ADMIN_ROOM } = require('../socket');
 const store = require('../store');
 const { newObjectId } = require('../helpers');
+const { classify, ALLOWED_DESCRIPTION } = require('../attachmentPolicy');
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const match = classify(file.mimetype, file.originalname);
+    if (!match) {
+      const e = new Error(`Unsupported file type - only ${ALLOWED_DESCRIPTION} are allowed`);
+      e.httpStatus = 400;
+      return cb(e);
+    }
+    file.attachmentMatch = match;
+    cb(null, true);
+  },
+});
 
 /** Adds customer_* ticket columns (not part of the customer-facing ticketDoc) for the admin ticket list/header. */
 function adminTicketDoc(row) {
@@ -101,13 +115,12 @@ function createAdminRouter(io) {
     });
 
     const base = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
-    const kind = (req.file.mimetype || '').startsWith('image/') ? 'image' : 'document';
     res.json({
       status: 1,
       message: 'File uploaded successfully',
       result: {
         url: `${base}/v1/api/chat-attachment/${oid}`,
-        attachmentType: kind,
+        attachmentType: req.file.attachmentMatch.kind,
         attachmentName: req.file.originalname || '',
         attachmentSize: req.file.size || 0,
       },
