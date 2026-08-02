@@ -32,6 +32,23 @@ app.use(express.json());
 app.get('/', (req, res) => res.status(200).send('papa777 chat service'));
 
 /**
+ * Railway's outbound IP isn't static, so whatever's whitelisted in
+ * Hostinger's Remote MySQL panel can go stale. This reports the
+ * container's actual current egress IP (via an external echo service, not
+ * anything DB-related) so it's easy to confirm you're whitelisting the
+ * right address instead of guessing.
+ */
+app.get('/health/egress-ip', async (req, res) => {
+  try {
+    const r = await fetch('https://api.ipify.org?format=json');
+    const data = await r.json();
+    res.json({ egressIp: data.ip });
+  } catch (e) {
+    res.status(503).json({ error: 'Could not determine egress IP' });
+  }
+});
+
+/**
  * Separates "is the process alive" from "can it actually reach MySQL" -
  * added after a real deploy showed a generic 500 with no way to tell
  * which of those two had failed. Reports the raw DB driver error CODE

@@ -4,6 +4,9 @@
   "description": "Node.js/socket.io real-time chat backend for ca-api.papa777.sbs - REST endpoints + websocket events, direct MySQL access to the same DB as the main PHP API.",
   "main": "server.js",
   "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "start": "node server.js"
   },
