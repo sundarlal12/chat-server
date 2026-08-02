@@ -141,6 +141,14 @@ function attachChatSocket(io) {
     // puts on the wire for the uploaded file's URL couldn't be fully
     // confirmed from the decompiled bytecode.
     socket.on('send-file-message', async (payload) => {
+      // Diagnostic-only, temporary: the exact field name the real app uses
+      // for the uploaded file's URL couldn't be confirmed from decompiled
+      // bytecode alone (R8 obfuscation broke part of that method) - this
+      // logs the RAW payload so the next real attachment send from the app
+      // shows up verbatim in Railway's logs, settling it for good instead
+      // of continuing to guess. Remove once confirmed.
+      console.log('send-file-message raw payload:', JSON.stringify(payload));
+
       const items = Array.isArray(payload) ? payload : [payload];
       for (const raw of items) {
         try {
