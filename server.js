@@ -53,22 +53,43 @@ app.get('/health', (req, res) => res.json({ status: 'ok' }));
 // failure, non-JSON) means the network path itself is broken.
 app.get('/health/php-check', async (req, res) => {
   const base = process.env.PHP_API_BASE_URL || '(unset)';
+  const out = { phpApiBaseUrl: base };
+
+  // DNS first, separately, so a DNS failure isn't lumped in with a
+  // connection/TLS/timeout failure - each points at a different fix.
+  try {
+    const { hostname } = new URL(base);
+    const dns = require('dns').promises;
+    const dnsStarted = Date.now();
+    out.dns = { hostname, addresses: await dns.resolve4(hostname), tookMs: Date.now() - dnsStarted };
+  } catch (e) {
+    out.dns = { error: String((e && e.message) || e) };
+  }
+
   try {
     const started = Date.now();
     const r = await fetch(`${base}/v1/api/get-user-data`, {
       headers: { Authorization: 'Bearer diagnostic-invalid-token' },
+      signal: AbortSignal.timeout(8000),
     });
     const text = await r.text();
-    res.json({
-      phpApiBaseUrl: base,
-      reachable: true,
-      httpStatus: r.status,
-      tookMs: Date.now() - started,
-      bodyPreview: text.slice(0, 300),
-    });
+    out.reachable = true;
+    out.httpStatus = r.status;
+    out.tookMs = Date.now() - started;
+    out.bodyPreview = text.slice(0, 300);
   } catch (e) {
-    res.json({ phpApiBaseUrl: base, reachable: false, error: String(e && e.message || e) });
+    out.reachable = false;
+    out.error = String((e && e.message) || e);
+    // undici sets .cause with the actual low-level error (ECONNREFUSED,
+    // ETIMEDOUT, cert errors, etc.) - "fetch failed" alone doesn't say
+    // which, and that's the difference between a firewall block, a DNS
+    // problem, and the remote host just being slow.
+    if (e && e.cause) {
+      out.cause = { message: e.cause.message, code: e.cause.code, name: e.cause.name };
+    }
   }
+
+  res.json(out);
 });
 
 const httpServer = http.createServer(app);
