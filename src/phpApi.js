@@ -16,8 +16,15 @@ async function getUserInfo(token) {
   const cached = cache.get(token);
   if (cached && cached.expiresAt > Date.now()) { return cached.user; }
 
+  // Without an explicit timeout, a slow/stuck connection to PHP (already
+  // seen once in production - a stuck connection pool made this hang
+  // indefinitely until the process was restarted) leaves every caller
+  // waiting forever, since fetch() has no default timeout of its own.
+  // Fail fast instead so a PHP-side hiccup surfaces as a normal auth
+  // error rather than a socket connection that never resolves.
   const res = await fetch(`${BASE_URL}/v1/api/get-user-data`, {
     headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(10000),
   });
   if (!res.ok) { return null; }
   const body = await res.json();

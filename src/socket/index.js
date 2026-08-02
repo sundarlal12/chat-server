@@ -42,24 +42,34 @@ const ADMIN_ROOM = '__admins__';
  */
 function attachChatSocket(io) {
   io.use(async (socket, next) => {
-    // Admin panel connects with ?adminToken=... instead of ?token=... - a
-    // deliberately separate query param (rather than trying the customer
-    // token verifier first) so the two auth schemes can't be confused with
-    // each other. See src/adminAuth.js for the admin JWT scheme.
-    const adminToken = socket.handshake.query?.adminToken || socket.handshake.auth?.adminToken;
-    if (adminToken) {
-      const admin = await verifyAdminToken(adminToken);
-      if (!admin) { return next(new Error('Please authenticate')); }
-      socket.isAdmin = true;
-      socket.admin = admin;
-      return next();
-    }
+    try {
+      // Admin panel connects with ?adminToken=... instead of ?token=... - a
+      // deliberately separate query param (rather than trying the customer
+      // token verifier first) so the two auth schemes can't be confused with
+      // each other. See src/adminAuth.js for the admin JWT scheme.
+      const adminToken = socket.handshake.query?.adminToken || socket.handshake.auth?.adminToken;
+      if (adminToken) {
+        const admin = await verifyAdminToken(adminToken);
+        if (!admin) { return next(new Error('Please authenticate')); }
+        socket.isAdmin = true;
+        socket.admin = admin;
+        return next();
+      }
 
-    const token = socket.handshake.query?.token || socket.handshake.auth?.token;
-    const user = await verifyToken(token);
-    if (!user) { return next(new Error('Please authenticate')); }
-    socket.user = user;
-    next();
+      const token = socket.handshake.query?.token || socket.handshake.auth?.token;
+      const user = await verifyToken(token);
+      if (!user) { return next(new Error('Please authenticate')); }
+      socket.user = user;
+      next();
+    } catch (e) {
+      // Without this, a rejected promise here (e.g. PHP timing out - see
+      // phpApi.js) never calls next() at all, so the connecting client
+      // just hangs forever instead of getting a clean auth error - this
+      // is exactly what made a slow PHP connection look like the whole
+      // chat feature was broken rather than one failed request.
+      console.error('socket auth middleware error:', e);
+      next(new Error('Please authenticate'));
+    }
   });
 
   io.on('connection', (socket) => {
