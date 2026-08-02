@@ -1,8 +1,11 @@
 const { verifyToken } = require('../auth');
 const { verifyAdminToken } = require('../adminAuth');
 const store = require('../store');
-const { createOrGetTicket, insertMessage, insertAdminMessage, markMessagesRead, submitRating, httpError } = require('../chatLogic');
-const { rawTicketDoc, createdTicketDoc, socketMessageDoc } = require('../socketDocs');
+const {
+  createOrGetTicket, insertMessage, insertAdminMessage, markMessagesRead, submitRating, httpError,
+  normalizeFileMessageItem,
+} = require('../chatLogic');
+const { rawTicketDoc, createdTicketDoc, socketMessageDoc, chatMessageEventName } = require('../socketDocs');
 
 /** Every admin socket joins this room on connect, so an `io.to(ADMIN_ROOM).emit(...)` reaches every logged-in admin regardless of which ticket (if any) they currently have open - used for the ticket-list "something happened" live signal. */
 const ADMIN_ROOM = '__admins__';
@@ -126,6 +129,39 @@ function attachChatSocket(io) {
       }
     });
 
+    // Distinct from "send-message" - confirmed via the decompiled app
+    // (SupportChatActivity has two SEPARATE Emitter.Listeners, "send-message"
+    // and "send-file-message"). The app never sends an attachment over
+    // "send-message" at all, so without this handler an attachment/voice
+    // note emit just went completely unanswered - no error, no response,
+    // nothing, which is exactly "can't send attachments" from the user's
+    // side. Payload is an ARRAY (one entry per attached file, for
+    // multi-select sends), each item normalized via
+    // normalizeFileMessageItem since the exact field names the client
+    // puts on the wire for the uploaded file's URL couldn't be fully
+    // confirmed from the decompiled bytecode.
+    socket.on('send-file-message', async (payload) => {
+      const items = Array.isArray(payload) ? payload : [payload];
+      for (const raw of items) {
+        try {
+          const body = normalizeFileMessageItem(raw || {});
+          if (!body.ticketId) { throw httpError(400, 'ticketId is required'); }
+          const ticket = await store.getTicketByOid(body.ticketId);
+          if (!ticket) { throw httpError(404, 'Ticket not found'); }
+
+          const message = await insertMessage(user, ticket, body);
+          const doc = socketMessageDoc(message);
+
+          socket.emit('send-file-message', { success: true, message: 'Message sent successfully', messageDoc: doc, isSent: true });
+          socket.to(String(ticket.oid)).emit('send-file-message', { success: true, message: 'Message sent successfully', messageDoc: doc });
+          io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: doc.createdAt });
+        } catch (e) {
+          socket.emit('send-file-message', { success: false, message: e.httpStatus ? e.message : 'Service temporarily unavailable' });
+          if (!e.httpStatus) { console.error(e); }
+        }
+      }
+    });
+
     socket.on('typing', (payload) => {
       const ticketId = payload?.ticketId;
       if (!ticketId) { return; }
@@ -198,7 +234,11 @@ function attachAdminHandlers(io, socket) {
       const message = await insertAdminMessage(socket.admin, ticket, body);
       const doc = socketMessageDoc(message);
 
-      io.to(String(ticket.oid)).emit('send-message', { success: true, message: 'Message sent successfully', messageDoc: doc });
+      // Attachments have to go out under "send-file-message" - the app's
+      // dedicated attachment listener - not "send-message", or the
+      // customer's own app never picks it up (see the send-file-message
+      // handler above for the full story).
+      io.to(String(ticket.oid)).emit(chatMessageEventName(message), { success: true, message: 'Message sent successfully', messageDoc: doc });
       io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: doc.createdAt });
     } catch (e) {
       socket.emit('admin-send-message', { success: false, message: e.httpStatus ? e.message : 'Service temporarily unavailable' });

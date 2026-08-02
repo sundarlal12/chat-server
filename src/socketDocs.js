@@ -95,4 +95,18 @@ function parseMentionIds(raw) {
   }
 }
 
-module.exports = { rawTicketDoc, createdTicketDoc, socketMessageDoc };
+/**
+ * The app has two SEPARATE listeners for an incoming chat message -
+ * "send-message" (plain text) and "send-file-message" (anything with an
+ * attachment) - confirmed via the decompiled SupportChatActivity (distinct
+ * event-name fields, each with its own Emitter.Listener). A message with
+ * an attachment broadcast under "send-message" would never reach the
+ * file-message listener at all, so which event a message goes out under
+ * has to match whether it actually has an attachment, regardless of which
+ * side (customer or admin) sent it.
+ */
+function chatMessageEventName(message) {
+  return message.attachment_url ? 'send-file-message' : 'send-message';
+}
+
+module.exports = { rawTicketDoc, createdTicketDoc, socketMessageDoc, chatMessageEventName };

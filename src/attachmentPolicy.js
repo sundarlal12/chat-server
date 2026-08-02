@@ -14,9 +14,14 @@ const ALLOWED = [
   { mimetypes: ['image/gif'], exts: ['.gif'], kind: 'image', messageType: 2 },
   { mimetypes: ['video/mp4'], exts: ['.mp4'], kind: 'video', messageType: 3 },
   { mimetypes: ['audio/mpeg', 'audio/mp3'], exts: ['.mp3'], kind: 'audio', messageType: 5 },
+  // Voice notes recorded in-browser (admin panel mic button) - MediaRecorder
+  // can't produce mp3, only webm/ogg (opus) - the real app's own voice
+  // notes are a DISTINCT messageType (6, not 5/audio) from the enum, so
+  // these get their own "voice" kind rather than being lumped into "audio".
+  { mimetypes: ['audio/webm', 'audio/ogg'], exts: ['.webm', '.ogg'], kind: 'voice', messageType: 6 },
 ];
 
-const KIND_TO_MESSAGE_TYPE = { image: 2, video: 3, document: 4, audio: 5 };
+const KIND_TO_MESSAGE_TYPE = { image: 2, video: 3, document: 4, audio: 5, voice: 6 };
 
 /** Classifies an upload by mimetype first, falling back to file extension for clients that send a generic mimetype (e.g. application/octet-stream). Returns null if the type isn't in the allow-list. */
 function classify(mimetype, originalname) {
@@ -28,6 +33,6 @@ function classify(mimetype, originalname) {
   return ALLOWED.find((a) => a.exts.includes(ext)) || null;
 }
 
-const ALLOWED_DESCRIPTION = 'images (jpg, png, gif), video (mp4), or audio (mp3)';
+const ALLOWED_DESCRIPTION = 'images (jpg, png, gif), video (mp4), audio (mp3), or a recorded voice note';
 
 module.exports = { classify, KIND_TO_MESSAGE_TYPE, ALLOWED_DESCRIPTION };

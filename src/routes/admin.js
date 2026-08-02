@@ -4,7 +4,7 @@ const { asyncRoute } = require('../asyncRoute');
 const { verifyPassword, issueAdminToken, requireAdminAuth } = require('../adminAuth');
 const { insertAdminMessage } = require('../chatLogic');
 const { ticketDoc, messageDoc } = require('../docs');
-const { socketMessageDoc } = require('../socketDocs');
+const { socketMessageDoc, chatMessageEventName } = require('../socketDocs');
 const { ADMIN_ROOM } = require('../socket');
 const store = require('../store');
 const { newObjectId } = require('../helpers');
@@ -90,7 +90,7 @@ function createAdminRouter(io) {
     if (!ticket) { return res.status(404).json({ code: 404, message: 'Ticket not found' }); }
     const message = await insertAdminMessage(req.admin, ticket, req.body || {});
 
-    io.to(String(ticket.oid)).emit('send-message', {
+    io.to(String(ticket.oid)).emit(chatMessageEventName(message), {
       success: true,
       message: 'Message sent successfully',
       messageDoc: socketMessageDoc(message),

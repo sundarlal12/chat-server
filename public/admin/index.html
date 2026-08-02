@@ -101,6 +101,8 @@
   #composer button.primary { background: #4f7cff; border-color: #4f7cff; color: white; font-weight: 600; }
   #composer button:hover { filter: brightness(1.1); }
   #composer button:disabled { opacity: 0.5; cursor: default; }
+  #voice-btn.recording { background: #7a1f1f; border-color: #ff4d4d; color: #ff9d9d; animation: pulse 1.2s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
   #pending-file { font-size: 11px; color: #8a93a3; padding: 0 14px 8px; }
 </style>
 </head>
@@ -152,6 +154,8 @@
   let renderedMessageIds = new Set();
   let pendingFile = null;
   let ticketRefreshTimer = null;
+  let mediaRecorder = null;
+  let recordedChunks = [];
 
   const $ = (sel) => document.querySelector(sel);
   const loginScreen = $('#login-screen');
@@ -217,12 +221,17 @@
   // ---------- Socket ----------
   function connectSocket() {
     socket = io({ path: '/socket.io/', query: { adminToken: token } });
-    socket.on('send-message', (data) => {
+    // The app has two separate incoming-message events - "send-message"
+    // (text) and "send-file-message" (anything with an attachment) - so
+    // both need a listener here, not just the first one.
+    const onIncoming = (data) => {
       if (!data || !data.success || !data.messageDoc) { return; }
       if (String(data.messageDoc.ticketId) === String(currentTicketId)) {
         appendMessage(data.messageDoc);
       }
-    });
+    };
+    socket.on('send-message', onIncoming);
+    socket.on('send-file-message', onIncoming);
     socket.on('admin:ticket-activity', () => {
       clearTimeout(ticketRefreshTimer);
       ticketRefreshTimer = setTimeout(loadTickets, 400);
@@ -279,6 +288,7 @@
       <div id="composer">
         <label class="icon-btn" for="file-input">📎</label>
         <input id="file-input" type="file" class="hidden" accept="image/jpeg,image/png,image/gif,video/mp4,audio/mpeg" />
+        <button id="voice-btn" title="Record a voice note">🎤</button>
         <textarea id="msg-input" placeholder="Type a reply…" rows="1"></textarea>
         <button id="send-btn" class="primary">Send</button>
       </div>`;
@@ -302,6 +312,7 @@
 
     $('#file-input').addEventListener('change', onFileSelected);
     $('#send-btn').addEventListener('click', sendCurrentMessage);
+    $('#voice-btn').addEventListener('click', toggleVoiceRecording);
     $('#msg-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendCurrentMessage(); }
     });
@@ -331,7 +342,7 @@
       // and degrades gracefully for anything else.
       if (m.attachmentType === 'video') {
         html += `<video class="att" src="${url}" controls></video>`;
-      } else if (m.attachmentType === 'audio') {
+      } else if (m.attachmentType === 'audio' || m.attachmentType === 'voice') {
         html += `<audio src="${url}" controls></audio>`;
       } else {
         const imgId = 'img_' + Math.random().toString(36).slice(2);
@@ -342,6 +353,54 @@
     el.innerHTML = html;
     box.appendChild(el);
     box.scrollTop = box.scrollHeight;
+  }
+
+  async function toggleVoiceRecording() {
+    const btn = $('#voice-btn');
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      mediaRecorder.stop();
+      return;
+    }
+
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      alert('Microphone access denied or unavailable: ' + err.message);
+      return;
+    }
+
+    const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg']
+      .find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || '';
+    recordedChunks = [];
+    mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    mediaRecorder.addEventListener('dataavailable', (e) => { if (e.data.size > 0) { recordedChunks.push(e.data); } });
+    mediaRecorder.addEventListener('stop', async () => {
+      stream.getTracks().forEach((t) => t.stop());
+      btn.classList.remove('recording');
+      btn.textContent = '🎤';
+
+      const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+      if (blob.size === 0) { return; }
+
+      $('#pending-file').textContent = 'Uploading voice note…';
+      try {
+        const ext = (mediaRecorder.mimeType || '').includes('ogg') ? 'ogg' : 'webm';
+        const fd = new FormData();
+        fd.append('file', blob, `voice-note.${ext}`);
+        const data = await api('/upload', { method: 'POST', body: fd });
+        pendingFile = data.result;
+        $('#pending-file').textContent = '';
+        await sendCurrentMessage();
+      } catch (err) {
+        $('#pending-file').textContent = 'Voice note upload failed: ' + err.message;
+        pendingFile = null;
+      }
+    });
+
+    mediaRecorder.start();
+    btn.classList.add('recording');
+    btn.textContent = '⏹';
   }
 
   async function onFileSelected(e) {

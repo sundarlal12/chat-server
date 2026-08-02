@@ -25,6 +25,27 @@ function resolveMessageType(body) {
 }
 
 /**
+ * "send-file-message" payload items - one array entry per attached file,
+ * built from the app's MediaPreviewModel (fileName/filePath/fileSize/
+ * fileExtension/mediaDuration/caption fields). The exact key names the
+ * client puts on the wire for the uploaded file's URL couldn't be fully
+ * confirmed from the decompiled bytecode (R8/JADX lost part of that method),
+ * so this accepts every plausible variant rather than a single guessed key.
+ */
+function normalizeFileMessageItem(body) {
+  const b = body || {};
+  return {
+    ...b,
+    message: b.message || b.content || b.caption || '',
+    attachmentUrl: b.attachmentUrl || b.fileUrl || b.url || '',
+    attachmentType: b.attachmentType || b.fileType || '',
+    attachmentName: b.attachmentName || b.fileName || '',
+    attachmentSize: b.attachmentSize !== undefined ? b.attachmentSize : b.fileSize,
+    duration: b.duration !== undefined ? b.duration : b.mediaDuration,
+  };
+}
+
+/**
  * Shared chat logic used by both the REST routes and the socket.io event
  * handlers (send-message goes through insertMessage, create-ticket goes
  * through createOrGetTicket, etc.) so there's exactly one place that
@@ -204,4 +225,7 @@ function httpError(status, message) {
   return e;
 }
 
-module.exports = { createOrGetTicket, insertMessage, insertAdminMessage, markMessagesRead, submitRating, httpError };
+module.exports = {
+  createOrGetTicket, insertMessage, insertAdminMessage, markMessagesRead, submitRating, httpError,
+  normalizeFileMessageItem,
+};
