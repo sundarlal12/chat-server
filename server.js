@@ -1,5 +1,6 @@
 require('dotenv').config();
 
+const path = require('path');
 const http = require('http');
 const express = require('express');
 const cors = require('cors');
@@ -9,6 +10,7 @@ const topicsRoute = require('./src/routes/topics');
 const chatDataRoute = require('./src/routes/chatData');
 const ticketsRoute = require('./src/routes/tickets');
 const attachmentsRoute = require('./src/routes/attachments');
+const { createAdminRouter } = require('./src/routes/admin');
 const { attachChatSocket } = require('./src/socket');
 const { migrate } = require('./migrate');
 
@@ -41,12 +43,28 @@ app.use(express.json());
 app.get('/', (req, res) => res.status(200).send('papa777 chat service'));
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
+const httpServer = http.createServer(app);
+const io = new Server(httpServer, {
+  cors: { origin: '*' },
+  // matches the client's own EIO=4 (socket.io v4 protocol) connection URL
+  // confirmed in papa776.har: wss://ca-api.papaji.dev/socket.io/?EIO=4&...
+  path: '/socket.io/',
+});
+attachChatSocket(io);
+
 // Routes are mounted directly under /v1/api, matching the app's real request
 // paths exactly (GET/POST https://ca-api.papa777.sbs/v1/api/get-all-topics etc).
 app.use('/v1/api', topicsRoute);
 app.use('/v1/api', chatDataRoute);
 app.use('/v1/api', ticketsRoute);
 app.use('/v1/api', attachmentsRoute);
+
+// Admin panel - simple static page + its own REST API, both served from
+// this same service (operator's explicit choice over a separate service).
+// createAdminRouter(io) needs `io` to broadcast a sent reply into the
+// ticket's socket.io room so it reaches an already-connected customer live.
+app.use('/admin/api', createAdminRouter(io));
+app.use('/admin', express.static(path.join(__dirname, 'public/admin')));
 
 app.use((req, res) => res.status(404).json({ code: 404, message: 'Not found' }));
 
@@ -61,15 +79,6 @@ app.use((err, req, res, next) => {
     message: err.httpStatus ? err.message : 'Service temporarily unavailable',
   });
 });
-
-const httpServer = http.createServer(app);
-const io = new Server(httpServer, {
-  cors: { origin: '*' },
-  // matches the client's own EIO=4 (socket.io v4 protocol) connection URL
-  // confirmed in papa776.har: wss://ca-api.papaji.dev/socket.io/?EIO=4&...
-  path: '/socket.io/',
-});
-attachChatSocket(io);
 
 const port = Number(process.env.PORT || 3000);
 

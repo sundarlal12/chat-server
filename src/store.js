@@ -52,13 +52,36 @@ async function insertTicket(t) {
     `INSERT INTO chat_tickets
        (oid,user_oid,topic_oid,subject,description,status,priority,is_ai_handled,
         recipient_oid,agent_name,agent_full_name,agent_profile_pic,
+        customer_name,customer_full_name,customer_profile_pic,
         last_activity,created_at,updated_at)
      VALUES (:oid,:user_oid,:topic_oid,:subject,:description,:status,:priority,:is_ai_handled,
              :recipient_oid,:agent_name,:agent_full_name,:agent_profile_pic,
+             :customer_name,:customer_full_name,:customer_profile_pic,
              :now,:now,:now)`,
     { ...t, now }
   );
   return getTicketByOid(t.oid);
+}
+
+/** Admin ticket list - most recently active first, optionally filtered by status. */
+async function getAllTickets({ status, limit, offset } = {}) {
+  const where = status ? 'WHERE status = :status' : '';
+  const params = status ? { status } : {};
+  return dbAll(
+    `SELECT * FROM chat_tickets ${where} ORDER BY last_activity DESC, id DESC LIMIT ${Number(limit || 50)} OFFSET ${Number(offset || 0)}`,
+    params
+  );
+}
+
+async function countAllTickets({ status } = {}) {
+  const where = status ? 'WHERE status = :status' : '';
+  const params = status ? { status } : {};
+  const row = await dbOne(`SELECT COUNT(*) AS n FROM chat_tickets ${where}`, params);
+  return Number(row?.n || 0);
+}
+
+async function getAdminByUsername(username) {
+  return dbOne('SELECT * FROM chat_admins WHERE username = :u LIMIT 1', { u: username });
 }
 
 async function updateTicket(oid, fields) {
@@ -137,6 +160,9 @@ module.exports = {
   getTicketByOid,
   insertTicket,
   updateTicket,
+  getAllTickets,
+  countAllTickets,
+  getAdminByUsername,
   getMessages,
   countMessages,
   insertMessageRow,

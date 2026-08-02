@@ -32,6 +32,8 @@ async function createOrGetTicket(user, { topicId }) {
   // routing/receiver_oid) stays constant, only the shown name varies.
   const topicName = topic ? topic.name : 'General';
   const agentName = store.pickAgentName();
+  const customerName = String(user.name || '');
+  const customerFullName = user.firstName ? `${user.firstName} ${user.lastName || ''}`.trim() : customerName;
   return store.insertTicket({
     oid: newObjectId(),
     user_oid: String(user.oid),
@@ -45,6 +47,9 @@ async function createOrGetTicket(user, { topicId }) {
     agent_name: agentName,
     agent_full_name: agentName,
     agent_profile_pic: '',
+    customer_name: customerName,
+    customer_full_name: customerFullName,
+    customer_profile_pic: String(user.profilePic || ''),
   });
 }
 
@@ -103,6 +108,50 @@ async function insertMessage(user, ticket, body) {
   return message;
 }
 
+/**
+ * Admin/agent side of send-message - sender is the TICKET's own agent
+ * identity (so it matches whatever name the customer already sees for
+ * this conversation, not a generic "admin"), receiver is the customer.
+ * Any logged-in admin can reply to any open ticket - there's no
+ * per-admin ticket assignment/ownership yet.
+ */
+async function insertAdminMessage(admin, ticket, body) {
+  const content = (body.message || body.content || '').trim();
+  const messageType = body.messageType !== undefined && body.messageType !== null ? Number(body.messageType) : 1;
+  const attachmentUrl = (body.attachmentUrl || '').trim();
+
+  if (!content && !attachmentUrl) { throw httpError(400, 'message is required'); }
+  if (content.length > 4000) { throw httpError(400, 'Message is too long'); }
+  if (String(ticket.status) === 'closed') { throw httpError(400, 'This ticket is closed'); }
+
+  const message = await store.insertMessageRow({
+    oid: newObjectId(),
+    ticket_oid: String(ticket.oid),
+    sender_oid: String(ticket.recipient_oid || ''),
+    sender_name: String(ticket.agent_name || ''),
+    sender_full_name: String(ticket.agent_full_name || ''),
+    sender_profile_pic: String(ticket.agent_profile_pic || ''),
+    receiver_oid: String(ticket.user_oid),
+    receiver_name: String(ticket.customer_name || ''),
+    receiver_full_name: String(ticket.customer_full_name || ''),
+    receiver_profile_pic: String(ticket.customer_profile_pic || ''),
+    content,
+    caption: (body.caption || '').trim(),
+    message_type: messageType,
+    delivery_status: 'delivered',
+    attachment_url: attachmentUrl || null,
+    attachment_type: (body.attachmentType || '').trim(),
+    attachment_name: (body.attachmentName || '').trim(),
+    attachment_size: body.attachmentSize !== undefined && body.attachmentSize !== null && body.attachmentSize !== '' ? Number(body.attachmentSize) : 0,
+    duration: body.duration !== undefined && body.duration !== null && body.duration !== '' ? Number(body.duration) : 0,
+    mention_ids: JSON.stringify([]),
+    video_image: null,
+  });
+
+  await store.updateTicket(String(ticket.oid), { last_activity: message.created_at });
+  return message;
+}
+
 async function markMessagesRead(user, ticketId) {
   const ticket = await store.getTicketByOid(ticketId);
   if (!ticket) { throw httpError(404, 'Ticket not found'); }
@@ -132,4 +181,4 @@ function httpError(status, message) {
   return e;
 }
 
-module.exports = { createOrGetTicket, insertMessage, markMessagesRead, submitRating, httpError };
+module.exports = { createOrGetTicket, insertMessage, insertAdminMessage, markMessagesRead, submitRating, httpError };

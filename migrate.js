@@ -1,5 +1,8 @@
 require('dotenv').config();
+const crypto = require('crypto');
 const { pool, dbOne, dbExec } = require('./src/db');
+const { hashPassword } = require('./src/adminAuth');
+const { newObjectId } = require('./src/helpers');
 
 /**
  * Idempotent schema + seed - safe to run on every deploy (called
@@ -70,6 +73,14 @@ async function migrate() {
       KEY idx_chat_tickets_user (user_oid, created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
 
+  // Added after chat_tickets already had real data in production - lets
+  // the admin ticket list show a customer name without a per-row PHP
+  // lookup (see chatLogic.js's createOrGetTicket, which populates these
+  // from the customer's own auth info at ticket-creation time).
+  await ensureColumn('chat_tickets', 'customer_name', "VARCHAR(120) NOT NULL DEFAULT ''");
+  await ensureColumn('chat_tickets', 'customer_full_name', "VARCHAR(120) NOT NULL DEFAULT ''");
+  await ensureColumn('chat_tickets', 'customer_profile_pic', "VARCHAR(512) NOT NULL DEFAULT ''");
+
   await createTableIfMissing('chat_messages', `
     CREATE TABLE chat_messages (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -107,6 +118,40 @@ async function migrate() {
   await ensureColumn('chat_messages', 'receiver_name', "VARCHAR(120) NOT NULL DEFAULT ''");
   await ensureColumn('chat_messages', 'receiver_full_name', "VARCHAR(120) NOT NULL DEFAULT ''");
   await ensureColumn('chat_messages', 'receiver_profile_pic', "VARCHAR(512) NOT NULL DEFAULT ''");
+
+  await createTableIfMissing('chat_admins', `
+    CREATE TABLE chat_admins (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      oid CHAR(24) NOT NULL,
+      username VARCHAR(64) NOT NULL,
+      password_hash VARCHAR(255) NOT NULL,
+      display_name VARCHAR(120) NOT NULL DEFAULT '',
+      created_at DATETIME NOT NULL,
+      updated_at DATETIME NOT NULL,
+      UNIQUE KEY uq_chat_admins_oid (oid),
+      UNIQUE KEY uq_chat_admins_username (username)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+  // Seed exactly one admin account the first time this ever runs, with a
+  // freshly generated random password - printed once here so the operator
+  // can capture it, never stored/logged anywhere else. If ADMIN_SEED_USERNAME/
+  // ADMIN_SEED_PASSWORD are set, those are used instead (e.g. to set a
+  // known password rather than a random one).
+  const anyAdmin = await dbOne('SELECT id FROM chat_admins LIMIT 1');
+  if (!anyAdmin) {
+    const username = process.env.ADMIN_SEED_USERNAME || 'admin';
+    const password = process.env.ADMIN_SEED_PASSWORD || crypto.randomBytes(9).toString('base64url');
+    await dbExec(
+      'INSERT INTO chat_admins (oid,username,password_hash,display_name,created_at,updated_at) VALUES (:oid,:u,:p,:d,:now,:now)',
+      { oid: newObjectId(), u: username, p: hashPassword(password), d: 'Admin', now: new Date().toISOString().slice(0, 19).replace('T', ' ') }
+    );
+    console.log('+ seeded initial admin account:');
+    console.log(`    username: ${username}`);
+    console.log(`    password: ${password}`);
+    console.log('  (shown once - save it now, it is not recoverable from the DB)');
+  } else {
+    console.log('= admin account already present');
+  }
 
   await createTableIfMissing('chat_attachments', `
     CREATE TABLE chat_attachments (

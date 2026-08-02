@@ -1,7 +1,11 @@
 const { verifyToken } = require('../auth');
+const { verifyAdminToken } = require('../adminAuth');
 const store = require('../store');
-const { createOrGetTicket, insertMessage, markMessagesRead, submitRating, httpError } = require('../chatLogic');
+const { createOrGetTicket, insertMessage, insertAdminMessage, markMessagesRead, submitRating, httpError } = require('../chatLogic');
 const { rawTicketDoc, createdTicketDoc, socketMessageDoc } = require('../socketDocs');
+
+/** Every admin socket joins this room on connect, so an `io.to(ADMIN_ROOM).emit(...)` reaches every logged-in admin regardless of which ticket (if any) they currently have open - used for the ticket-list "something happened" live signal. */
+const ADMIN_ROOM = '__admins__';
 
 /**
  * Real-time layer - rebuilt to match a REAL captured socket.io session
@@ -35,6 +39,19 @@ const { rawTicketDoc, createdTicketDoc, socketMessageDoc } = require('../socketD
  */
 function attachChatSocket(io) {
   io.use(async (socket, next) => {
+    // Admin panel connects with ?adminToken=... instead of ?token=... - a
+    // deliberately separate query param (rather than trying the customer
+    // token verifier first) so the two auth schemes can't be confused with
+    // each other. See src/adminAuth.js for the admin JWT scheme.
+    const adminToken = socket.handshake.query?.adminToken || socket.handshake.auth?.adminToken;
+    if (adminToken) {
+      const admin = await verifyAdminToken(adminToken);
+      if (!admin) { return next(new Error('Please authenticate')); }
+      socket.isAdmin = true;
+      socket.admin = admin;
+      return next();
+    }
+
     const token = socket.handshake.query?.token || socket.handshake.auth?.token;
     const user = await verifyToken(token);
     if (!user) { return next(new Error('Please authenticate')); }
@@ -43,6 +60,8 @@ function attachChatSocket(io) {
   });
 
   io.on('connection', (socket) => {
+    if (socket.isAdmin) { return attachAdminHandlers(io, socket); }
+
     const user = socket.user;
     const userOid = String(user.oid);
 
@@ -75,11 +94,13 @@ function attachChatSocket(io) {
       try {
         const ticket = await createOrGetTicket(user, payload || {});
         socket.join(String(ticket.oid));
+        const ticketDocOut = createdTicketDoc(ticket);
         socket.emit('create-ticket', {
           success: true,
           message: 'Ticket created. AI is responding.',
-          ticket: createdTicketDoc(ticket),
+          ticket: ticketDocOut,
         });
+        io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: ticketDocOut.lastActivity });
       } catch (e) {
         socket.emit('create-ticket', { success: false, message: e.httpStatus ? e.message : 'Service temporarily unavailable' });
         if (!e.httpStatus) { console.error(e); }
@@ -98,6 +119,7 @@ function attachChatSocket(io) {
 
         socket.emit('send-message', { success: true, message: 'Message sent successfully', messageDoc: doc, isSent: true });
         socket.to(String(ticket.oid)).emit('send-message', { success: true, message: 'Message sent successfully', messageDoc: doc });
+        io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: doc.createdAt });
       } catch (e) {
         socket.emit('send-message', { success: false, message: e.httpStatus ? e.message : 'Service temporarily unavailable' });
         if (!e.httpStatus) { console.error(e); }
@@ -145,4 +167,44 @@ function attachChatSocket(io) {
   });
 }
 
-module.exports = { attachChatSocket };
+/**
+ * Admin panel side of the same socket - shares the customer flow's room
+ * model (one room per ticketId) so a message sent/received on either side
+ * reaches both, but an admin doesn't auto-join anything on connect (they
+ * pick a ticket from the panel's list first) and instead of one fixed
+ * ticket per connection can join/leave rooms as they switch between open
+ * conversations.
+ */
+function attachAdminHandlers(io, socket) {
+  socket.join(ADMIN_ROOM);
+
+  socket.on('join-ticket', ({ ticketId } = {}) => {
+    if (!ticketId) { return; }
+    socket.join(String(ticketId));
+  });
+
+  socket.on('leave-ticket', ({ ticketId } = {}) => {
+    if (!ticketId) { return; }
+    socket.leave(String(ticketId));
+  });
+
+  socket.on('admin-send-message', async (payload) => {
+    try {
+      const body = payload || {};
+      if (!body.ticketId) { throw httpError(400, 'ticketId is required'); }
+      const ticket = await store.getTicketByOid(body.ticketId);
+      if (!ticket) { throw httpError(404, 'Ticket not found'); }
+
+      const message = await insertAdminMessage(socket.admin, ticket, body);
+      const doc = socketMessageDoc(message);
+
+      io.to(String(ticket.oid)).emit('send-message', { success: true, message: 'Message sent successfully', messageDoc: doc });
+      io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: doc.createdAt });
+    } catch (e) {
+      socket.emit('admin-send-message', { success: false, message: e.httpStatus ? e.message : 'Service temporarily unavailable' });
+      if (!e.httpStatus) { console.error(e); }
+    }
+  });
+}
+
+module.exports = { attachChatSocket, ADMIN_ROOM };

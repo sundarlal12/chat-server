@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PAPA777 Chat Admin</title>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0f1115; color: #e6e8eb; height: 100vh; overflow: hidden;
+  }
+  .hidden { display: none !important; }
+
+  /* ---------- Login ---------- */
+  #login-screen {
+    height: 100vh; display: flex; align-items: center; justify-content: center;
+  }
+  #login-box {
+    width: 320px; background: #171a21; border: 1px solid #262b36; border-radius: 10px; padding: 28px;
+  }
+  #login-box h1 { font-size: 18px; margin: 0 0 4px; }
+  #login-box p.sub { color: #8a93a3; font-size: 13px; margin: 0 0 20px; }
+  #login-box input {
+    width: 100%; padding: 10px 12px; margin-bottom: 12px; border-radius: 6px;
+    border: 1px solid #2b303c; background: #0f1115; color: #e6e8eb; font-size: 14px;
+  }
+  #login-box button {
+    width: 100%; padding: 10px 12px; border-radius: 6px; border: none;
+    background: #4f7cff; color: white; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  #login-box button:hover { background: #3d6ae8; }
+  #login-error { color: #ff6b6b; font-size: 13px; margin: 0 0 12px; min-height: 16px; }
+
+  /* ---------- App shell ---------- */
+  #app-screen { display: flex; flex-direction: column; height: 100vh; }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 16px; border-bottom: 1px solid #262b36; background: #171a21; flex-shrink: 0;
+  }
+  header h1 { font-size: 15px; margin: 0; }
+  header .who { color: #8a93a3; font-size: 12px; }
+  header button {
+    background: none; border: 1px solid #2b303c; color: #ccc; padding: 6px 12px;
+    border-radius: 6px; font-size: 12px; cursor: pointer;
+  }
+  header button:hover { background: #22262f; }
+
+  #main { flex: 1; display: flex; min-height: 0; }
+
+  /* ---------- Ticket list ---------- */
+  #ticket-panel { width: 320px; border-right: 1px solid #262b36; display: flex; flex-direction: column; flex-shrink: 0; }
+  #status-tabs { display: flex; gap: 4px; padding: 10px; border-bottom: 1px solid #262b36; }
+  #status-tabs button {
+    flex: 1; background: #171a21; border: 1px solid #262b36; color: #8a93a3; padding: 6px 0;
+    border-radius: 6px; font-size: 12px; cursor: pointer;
+  }
+  #status-tabs button.active { background: #4f7cff; border-color: #4f7cff; color: white; }
+  #ticket-list { flex: 1; overflow-y: auto; }
+  .ticket-row {
+    padding: 12px 14px; border-bottom: 1px solid #1c2028; cursor: pointer; position: relative;
+  }
+  .ticket-row:hover { background: #171a21; }
+  .ticket-row.selected { background: #1c2540; }
+  .ticket-row .name { font-size: 13px; font-weight: 600; margin-bottom: 3px; }
+  .ticket-row .subject { font-size: 12px; color: #8a93a3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ticket-row .meta { font-size: 11px; color: #5a6273; margin-top: 4px; display: flex; justify-content: space-between; }
+  .badge {
+    display: inline-block; font-size: 10px; padding: 2px 6px; border-radius: 10px; text-transform: uppercase;
+  }
+  .badge.open { background: #1f4d2f; color: #6fd88f; }
+  .badge.closed { background: #3a2323; color: #ff9d9d; }
+  #ticket-empty { padding: 20px 14px; color: #5a6273; font-size: 13px; }
+
+  /* ---------- Chat panel ---------- */
+  #chat-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #chat-placeholder { flex: 1; display: flex; align-items: center; justify-content: center; color: #5a6273; font-size: 13px; }
+  #chat-header { padding: 12px 16px; border-bottom: 1px solid #262b36; }
+  #chat-header .name { font-size: 14px; font-weight: 600; }
+  #chat-header .subject { font-size: 12px; color: #8a93a3; margin-top: 2px; }
+  #messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { max-width: 60%; padding: 8px 12px; border-radius: 10px; font-size: 13px; line-height: 1.4; word-wrap: break-word; }
+  .msg.in { align-self: flex-start; background: #1c2028; border-bottom-left-radius: 2px; }
+  .msg.out { align-self: flex-end; background: #4f7cff; color: white; border-bottom-right-radius: 2px; }
+  .msg .time { display: block; font-size: 10px; opacity: 0.65; margin-top: 4px; }
+  .msg img.att { max-width: 220px; border-radius: 6px; display: block; margin-top: 6px; }
+  .msg a.att-link { display: inline-block; margin-top: 6px; font-size: 12px; color: inherit; text-decoration: underline; }
+
+  #composer { border-top: 1px solid #262b36; padding: 10px 14px; display: flex; gap: 8px; align-items: flex-end; }
+  #composer textarea {
+    flex: 1; resize: none; min-height: 38px; max-height: 120px; padding: 9px 12px; border-radius: 8px;
+    border: 1px solid #2b303c; background: #0f1115; color: #e6e8eb; font-size: 13px; font-family: inherit;
+  }
+  #composer button, #composer label.icon-btn {
+    background: #22262f; border: 1px solid #2b303c; color: #ccc; padding: 9px 12px; border-radius: 8px;
+    font-size: 13px; cursor: pointer; flex-shrink: 0;
+  }
+  #composer button.primary { background: #4f7cff; border-color: #4f7cff; color: white; font-weight: 600; }
+  #composer button:hover { filter: brightness(1.1); }
+  #composer button:disabled { opacity: 0.5; cursor: default; }
+  #pending-file { font-size: 11px; color: #8a93a3; padding: 0 14px 8px; }
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <div id="login-box">
+    <h1>PAPA777 Chat Admin</h1>
+    <p class="sub">Sign in with your chat-admin account.</p>
+    <p id="login-error"></p>
+    <input id="login-username" type="text" placeholder="Username" autocomplete="username" />
+    <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" />
+    <button id="login-btn">Log in</button>
+  </div>
+</div>
+
+<div id="app-screen" class="hidden">
+  <header>
+    <h1>PAPA777 Chat Admin</h1>
+    <div style="display:flex; align-items:center; gap:12px;">
+      <span class="who" id="who-label"></span>
+      <button id="logout-btn">Log out</button>
+    </div>
+  </header>
+  <div id="main">
+    <div id="ticket-panel">
+      <div id="status-tabs">
+        <button data-status="open" class="active">Open</button>
+        <button data-status="closed">Closed</button>
+        <button data-status="">All</button>
+      </div>
+      <div id="ticket-list"></div>
+    </div>
+    <div id="chat-panel">
+      <div id="chat-placeholder">Select a conversation on the left</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const API = '/admin/api';
+  let token = localStorage.getItem('chatAdminToken') || '';
+  let adminInfo = null;
+  let socket = null;
+  let currentStatus = 'open';
+  let currentTicketId = null;
+  let currentTicket = null;
+  let renderedMessageIds = new Set();
+  let pendingFile = null;
+  let ticketRefreshTimer = null;
+
+  const $ = (sel) => document.querySelector(sel);
+  const loginScreen = $('#login-screen');
+  const appScreen = $('#app-screen');
+
+  function escapeHtml(s) {
+    return String(s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  async function api(path, opts = {}) {
+    const res = await fetch(API + path, {
+      ...opts,
+      headers: {
+        ...(opts.body && !(opts.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
+        ...(token ? { Authorization: 'Bearer ' + token } : {}),
+        ...(opts.headers || {}),
+      },
+    });
+    if (res.status === 401) { logout(); throw new Error('Please log in'); }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { throw new Error(data.message || 'Request failed'); }
+    return data;
+  }
+
+  // ---------- Auth ----------
+  $('#login-btn').addEventListener('click', doLogin);
+  $('#login-password').addEventListener('keydown', (e) => { if (e.key === 'Enter') { doLogin(); } });
+
+  async function doLogin() {
+    const username = $('#login-username').value.trim();
+    const password = $('#login-password').value;
+    $('#login-error').textContent = '';
+    if (!username || !password) { $('#login-error').textContent = 'Enter a username and password.'; return; }
+    try {
+      const data = await api('/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+      token = data.token;
+      adminInfo = data.admin;
+      localStorage.setItem('chatAdminToken', token);
+      enterApp();
+    } catch (e) {
+      $('#login-error').textContent = e.message || 'Login failed';
+    }
+  }
+
+  $('#logout-btn').addEventListener('click', logout);
+  function logout() {
+    token = '';
+    localStorage.removeItem('chatAdminToken');
+    if (socket) { socket.disconnect(); socket = null; }
+    currentTicketId = null;
+    appScreen.classList.add('hidden');
+    loginScreen.classList.remove('hidden');
+  }
+
+  async function enterApp() {
+    loginScreen.classList.add('hidden');
+    appScreen.classList.remove('hidden');
+    $('#who-label').textContent = adminInfo ? adminInfo.displayName : '';
+    connectSocket();
+    await loadTickets();
+  }
+
+  // ---------- Socket ----------
+  function connectSocket() {
+    socket = io({ path: '/socket.io/', query: { adminToken: token } });
+    socket.on('send-message', (data) => {
+      if (!data || !data.success || !data.messageDoc) { return; }
+      if (String(data.messageDoc.ticketId) === String(currentTicketId)) {
+        appendMessage(data.messageDoc);
+      }
+    });
+    socket.on('admin:ticket-activity', () => {
+      clearTimeout(ticketRefreshTimer);
+      ticketRefreshTimer = setTimeout(loadTickets, 400);
+    });
+  }
+
+  // ---------- Ticket list ----------
+  document.querySelectorAll('#status-tabs button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#status-tabs button').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentStatus = btn.dataset.status;
+      loadTickets();
+    });
+  });
+
+  async function loadTickets() {
+    let data;
+    try {
+      const qs = currentStatus ? ('?status=' + encodeURIComponent(currentStatus) + '&limit=100') : '?limit=100';
+      data = await api('/tickets' + qs);
+    } catch (e) { return; }
+    const list = $('#ticket-list');
+    if (!data.data.length) {
+      list.innerHTML = '<div id="ticket-empty">No conversations here.</div>';
+      return;
+    }
+    list.innerHTML = data.data.map((t) => `
+      <div class="ticket-row ${t.id === currentTicketId ? 'selected' : ''}" data-id="${t.id}">
+        <div class="name">${escapeHtml(t.customerFullName || t.customerName || 'Customer')}</div>
+        <div class="subject">${escapeHtml(t.subject)}</div>
+        <div class="meta">
+          <span class="badge ${t.status === 'closed' ? 'closed' : 'open'}">${escapeHtml(t.status)}</span>
+          <span>${new Date(t.lastActivity).toLocaleString()}</span>
+        </div>
+      </div>`).join('');
+    list.querySelectorAll('.ticket-row').forEach((row) => {
+      row.addEventListener('click', () => openTicket(row.dataset.id));
+    });
+  }
+
+  // ---------- Chat ----------
+  async function openTicket(ticketId) {
+    if (currentTicketId && socket) { socket.emit('leave-ticket', { ticketId: currentTicketId }); }
+    currentTicketId = ticketId;
+    renderedMessageIds = new Set();
+    document.querySelectorAll('.ticket-row').forEach((r) => r.classList.toggle('selected', r.dataset.id === ticketId));
+
+    const panel = $('#chat-panel');
+    panel.innerHTML = `
+      <div id="chat-header"><div class="name">Loading…</div></div>
+      <div id="messages"></div>
+      <div id="pending-file"></div>
+      <div id="composer">
+        <label class="icon-btn" for="file-input">📎</label>
+        <input id="file-input" type="file" class="hidden" />
+        <textarea id="msg-input" placeholder="Type a reply…" rows="1"></textarea>
+        <button id="send-btn" class="primary">Send</button>
+      </div>`;
+
+    let data;
+    try {
+      data = await api('/tickets/' + ticketId + '/messages');
+    } catch (e) { return; }
+    currentTicket = data.ticket;
+
+    $('#chat-header').innerHTML = `
+      <div class="name">${escapeHtml(currentTicket.customerFullName || currentTicket.customerName || 'Customer')}</div>
+      <div class="subject">${escapeHtml(currentTicket.subject)} · <span class="badge ${currentTicket.status === 'closed' ? 'closed' : 'open'}">${escapeHtml(currentTicket.status)}</span></div>`;
+
+    const box = $('#messages');
+    box.innerHTML = '';
+    data.data.forEach((m) => appendMessage(m, true));
+    box.scrollTop = box.scrollHeight;
+
+    if (socket) { socket.emit('join-ticket', { ticketId }); }
+
+    $('#file-input').addEventListener('change', onFileSelected);
+    $('#send-btn').addEventListener('click', sendCurrentMessage);
+    $('#msg-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendCurrentMessage(); }
+    });
+  }
+
+  function appendMessage(m, skipDedupe) {
+    const id = m._id || (m.createdAt + Math.random());
+    if (!skipDedupe) {
+      if (renderedMessageIds.has(id)) { return; }
+      renderedMessageIds.add(id);
+    } else {
+      renderedMessageIds.add(id);
+    }
+    const isOutgoing = currentTicket && m.sender && String(m.sender._id) === String(currentTicket.assignedTo);
+    const box = $('#messages');
+    if (!box) { return; }
+    const el = document.createElement('div');
+    el.className = 'msg ' + (isOutgoing ? 'out' : 'in');
+    let html = m.content ? escapeHtml(m.content) : '';
+    if (m.attachmentUrl) {
+      const imgId = 'img_' + Math.random().toString(36).slice(2);
+      html += `<img class="att" id="${imgId}" src="${escapeHtml(m.attachmentUrl)}" onerror="document.getElementById('${imgId}').outerHTML='<a class=att-link href=&quot;${escapeHtml(m.attachmentUrl)}&quot; target=_blank rel=noopener>📎 Download attachment</a>'" />`;
+    }
+    html += `<span class="time">${new Date(m.createdAt).toLocaleString()}</span>`;
+    el.innerHTML = html;
+    box.appendChild(el);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  async function onFileSelected(e) {
+    const file = e.target.files[0];
+    if (!file) { return; }
+    $('#pending-file').textContent = 'Uploading ' + file.name + '…';
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const data = await api('/upload', { method: 'POST', body: fd });
+      pendingFile = data.result;
+      $('#pending-file').textContent = 'Attached: ' + pendingFile.attachmentName;
+    } catch (err) {
+      $('#pending-file').textContent = 'Upload failed: ' + err.message;
+      pendingFile = null;
+    }
+  }
+
+  async function sendCurrentMessage() {
+    const input = $('#msg-input');
+    const text = input.value.trim();
+    if (!text && !pendingFile) { return; }
+    const body = { message: text };
+    if (pendingFile) {
+      body.attachmentUrl = pendingFile.url;
+      body.attachmentType = pendingFile.attachmentType;
+      body.attachmentName = pendingFile.attachmentName;
+      body.attachmentSize = pendingFile.attachmentSize;
+    }
+    $('#send-btn').disabled = true;
+    try {
+      const data = await api('/tickets/' + currentTicketId + '/messages', { method: 'POST', body: JSON.stringify(body) });
+      appendMessage(data.data);
+      input.value = '';
+      pendingFile = null;
+      $('#pending-file').textContent = '';
+      $('#file-input').value = '';
+    } catch (err) {
+      alert(err.message || 'Failed to send');
+    } finally {
+      $('#send-btn').disabled = false;
+    }
+  }
+
+  // ---------- Boot ----------
+  if (token) {
+    api('/tickets?limit=1').then(() => enterApp()).catch(() => { logout(); });
+  }
+})();
+</script>
+</body>
+</html>
