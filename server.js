@@ -43,6 +43,34 @@ app.use(express.json());
 app.get('/', (req, res) => res.status(200).send('papa777 chat service'));
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
+// Diagnostic-only, temporary: reports whether THIS deployment can actually
+// reach PHP_API_BASE_URL (auth/display-name delegation - see phpApi.js)
+// and what value it resolved to, since "PHP returns valid data when I curl
+// it directly" and "PHP is reachable from Railway's own egress" can differ
+// (already saw exactly this class of issue with Hostinger MySQL blocking
+// Railway's IP earlier - see README). A 401 from PHP here means reachable
+// (PHP correctly rejected a garbage token); anything else (timeout, DNS
+// failure, non-JSON) means the network path itself is broken.
+app.get('/health/php-check', async (req, res) => {
+  const base = process.env.PHP_API_BASE_URL || '(unset)';
+  try {
+    const started = Date.now();
+    const r = await fetch(`${base}/v1/api/get-user-data`, {
+      headers: { Authorization: 'Bearer diagnostic-invalid-token' },
+    });
+    const text = await r.text();
+    res.json({
+      phpApiBaseUrl: base,
+      reachable: true,
+      httpStatus: r.status,
+      tookMs: Date.now() - started,
+      bodyPreview: text.slice(0, 300),
+    });
+  } catch (e) {
+    res.json({ phpApiBaseUrl: base, reachable: false, error: String(e && e.message || e) });
+  }
+});
+
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
   cors: { origin: '*' },
