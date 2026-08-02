@@ -132,25 +132,53 @@ async function migrate() {
       UNIQUE KEY uq_chat_admins_username (username)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
 
-  // Seed exactly one admin account the first time this ever runs, with a
-  // freshly generated random password - printed once here so the operator
-  // can capture it, never stored/logged anywhere else. If ADMIN_SEED_USERNAME/
-  // ADMIN_SEED_PASSWORD are set, those are used instead (e.g. to set a
-  // known password rather than a random one).
-  const anyAdmin = await dbOne('SELECT id FROM chat_admins LIMIT 1');
-  if (!anyAdmin) {
-    const username = process.env.ADMIN_SEED_USERNAME || 'admin';
-    const password = process.env.ADMIN_SEED_PASSWORD || crypto.randomBytes(9).toString('base64url');
-    await dbExec(
-      'INSERT INTO chat_admins (oid,username,password_hash,display_name,created_at,updated_at) VALUES (:oid,:u,:p,:d,:now,:now)',
-      { oid: newObjectId(), u: username, p: hashPassword(password), d: 'Admin', now: new Date().toISOString().slice(0, 19).replace('T', ' ') }
-    );
-    console.log('+ seeded initial admin account:');
-    console.log(`    username: ${username}`);
-    console.log(`    password: ${password}`);
-    console.log('  (shown once - save it now, it is not recoverable from the DB)');
+  // If ADMIN_SEED_USERNAME/ADMIN_SEED_PASSWORD are explicitly set, reconcile
+  // toward them on EVERY startup (not just first-run) - so setting/changing
+  // these env vars on Railway and redeploying is how the admin username/
+  // password gets set or rotated, rather than being a one-time-only seed.
+  // With no admin account at all, one is created from these values; with
+  // exactly one existing account (the common case - this system supports a
+  // single admin login), it's renamed/repassworded to match; if an account
+  // with this exact username already exists, only its password is synced.
+  // With nothing set, falls back to a one-time random-password seed so the
+  // service still has SOME way in on a completely fresh deploy.
+  const nowStr = () => new Date().toISOString().slice(0, 19).replace('T', ' ');
+  if (process.env.ADMIN_SEED_USERNAME && process.env.ADMIN_SEED_PASSWORD) {
+    const username = process.env.ADMIN_SEED_USERNAME;
+    const passwordHash = hashPassword(process.env.ADMIN_SEED_PASSWORD);
+    const byUsername = await dbOne('SELECT id FROM chat_admins WHERE username = :u LIMIT 1', { u: username });
+    if (byUsername) {
+      await dbExec('UPDATE chat_admins SET password_hash = :p, updated_at = :now WHERE id = :id', { p: passwordHash, now: nowStr(), id: byUsername.id });
+      console.log(`= admin "${username}" already present - password synced from ADMIN_SEED_PASSWORD`);
+    } else {
+      const [allAdmins] = await pool.query('SELECT id FROM chat_admins');
+      if (allAdmins.length === 1) {
+        await dbExec('UPDATE chat_admins SET username = :u, password_hash = :p, updated_at = :now WHERE id = :id', { u: username, p: passwordHash, now: nowStr(), id: allAdmins[0].id });
+        console.log(`+ renamed existing admin account to "${username}" and synced its password`);
+      } else {
+        await dbExec(
+          'INSERT INTO chat_admins (oid,username,password_hash,display_name,created_at,updated_at) VALUES (:oid,:u,:p,:d,:now,:now)',
+          { oid: newObjectId(), u: username, p: passwordHash, d: 'Admin', now: nowStr() }
+        );
+        console.log(`+ seeded admin account "${username}" from ADMIN_SEED_USERNAME/ADMIN_SEED_PASSWORD`);
+      }
+    }
   } else {
-    console.log('= admin account already present');
+    const anyAdmin = await dbOne('SELECT id FROM chat_admins LIMIT 1');
+    if (!anyAdmin) {
+      const username = 'admin';
+      const password = crypto.randomBytes(9).toString('base64url');
+      await dbExec(
+        'INSERT INTO chat_admins (oid,username,password_hash,display_name,created_at,updated_at) VALUES (:oid,:u,:p,:d,:now,:now)',
+        { oid: newObjectId(), u: username, p: hashPassword(password), d: 'Admin', now: nowStr() }
+      );
+      console.log('+ seeded initial admin account:');
+      console.log(`    username: ${username}`);
+      console.log(`    password: ${password}`);
+      console.log('  (shown once - save it now, it is not recoverable from the DB)');
+    } else {
+      console.log('= admin account already present');
+    }
   }
 
   await createTableIfMissing('chat_attachments', `
