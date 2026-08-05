@@ -124,6 +124,12 @@ async function resolveInlineAttachment(user, raw) {
  * for the full request/response contracts that trace confirmed.
  */
 
+// Canned first message the agent identity sends the instant a ticket opens
+// (confirmed via a real get-chat-data-of-recent-ticket response - a brand
+// new ticket already had this exact text as its only message before the
+// customer had sent anything).
+const WELCOME_MESSAGE = 'Welcome to papa777 🎉\n\nNamasthe sir/mam🙏\nHow can I help you today';
+
 async function createOrGetTicket(user, { topicId }) {
   if (topicId && !isObjectId(topicId)) { throw httpError(400, 'Invalid topicId'); }
 
@@ -145,7 +151,7 @@ async function createOrGetTicket(user, { topicId }) {
   const agentName = store.pickAgentName();
   const customerName = String(user.name || '');
   const customerFullName = user.firstName ? `${user.firstName} ${user.lastName || ''}`.trim() : customerName;
-  return store.insertTicket({
+  const ticket = await store.insertTicket({
     oid: newObjectId(),
     user_oid: String(user.oid),
     topic_oid: topicId ? topicId.toLowerCase() : null,
@@ -162,6 +168,35 @@ async function createOrGetTicket(user, { topicId }) {
     customer_full_name: customerFullName,
     customer_profile_pic: String(user.profilePic || ''),
   });
+
+  // Sender is the ticket's own agent identity, receiver the customer -
+  // matches insertAdminMessage's direction (agent -> customer), the only
+  // orientation the greeting's own text actually makes sense in.
+  await store.insertMessageRow({
+    oid: newObjectId(),
+    ticket_oid: String(ticket.oid),
+    sender_oid: String(ticket.recipient_oid || ''),
+    sender_name: String(ticket.agent_name || ''),
+    sender_full_name: String(ticket.agent_full_name || ''),
+    sender_profile_pic: String(ticket.agent_profile_pic || ''),
+    receiver_oid: String(ticket.user_oid),
+    receiver_name: customerName,
+    receiver_full_name: customerFullName,
+    receiver_profile_pic: String(user.profilePic || ''),
+    content: WELCOME_MESSAGE,
+    caption: '',
+    message_type: 1,
+    delivery_status: 'delivered',
+    attachment_url: null,
+    attachment_type: '',
+    attachment_name: '',
+    attachment_size: 0,
+    duration: 0,
+    mention_ids: JSON.stringify([]),
+    video_image: null,
+  });
+
+  return ticket;
 }
 
 async function insertMessage(user, ticket, body) {
