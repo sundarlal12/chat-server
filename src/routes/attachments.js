@@ -24,36 +24,27 @@ const upload = multer({
 });
 
 /**
- * Needs `io` for the optional finalize-in-place step below - broadcasting
- * an update into the ticket's socket.io room, same as admin.js's router.
+ * Shared by both upload routes below (see each router's own comment for
+ * which path is which). Needs `io` to broadcast a finalized message update
+ * into the ticket's socket.io room, same as admin.js's router.
+ *
+ * Optional field "messageId": a live captured trace confirmed the app's
+ * send-file-message socket event carries no file reference at all - it
+ * just creates a "sending" placeholder message (see insertMessage in
+ * chatLogic.js). That placeholder's `_id` is returned to the client in the
+ * socket ack. A SEPARATE live captured request confirmed the real client
+ * does pass that id back here (as "messageId", alongside "ticketId",
+ * "recipientId", "caption", "duration") to finalize the same message in
+ * place (real attachment fields + caption/duration + deliveryStatus
+ * "sent") rather than only minting a standalone URL - this also broadcasts
+ * the update into the ticket's room so an already-open chat updates live
+ * instead of only on next fetch. ticketId/recipientId aren't otherwise
+ * used here - the placeholder message row already carries that
+ * information reliably (found via messageId), so trusting a client-passed
+ * ticketId for room targeting isn't necessary.
  */
-function createAttachmentsRouter(io) {
-  const router = express.Router();
-
-  /**
-   * POST /v1/api/upload-chat-attachment
-   *
-   * Files can't travel over a socket.io event, so this is where the actual
-   * bytes go (multipart, field "file"), stored as a BLOB in this service's
-   * own MySQL (chat_attachments) rather than on disk, per the operator's
-   * explicit "store chat and attachments on mysql db" request.
-   *
-   * Optional field "messageId": a live captured trace confirmed the app's
-   * send-file-message socket event carries no file reference at all - it
-   * just creates a "sending" placeholder message (see insertMessage in
-   * chatLogic.js). That placeholder's `_id` is returned to the client in
-   * the socket ack, so if it's passed back here alongside the file, this
-   * finalizes THAT message in place (attachment fields + deliveryStatus
-   * "sent") instead of only minting a standalone URL, and broadcasts the
-   * update into the ticket's room so an already-open chat updates live
-   * rather than only on next fetch. No trace of the real app's own
-   * follow-up call exists to confirm this is its exact shape (this capture
-   * only had socket.io frames, no HTTP) - this is our own best-effort
-   * completion of the confirmed placeholder/finalize pattern.
-   *
-   * Response: {status, message, result: {url, attachmentType, attachmentName, attachmentSize}}
-   */
-  router.post('/upload-chat-attachment', requireAuth(), upload.single('file'), asyncRoute(async (req, res) => {
+function makeUploadHandler(io) {
+  return asyncRoute(async (req, res) => {
     if (!req.file) { return res.status(400).json({ code: 400, message: 'file is required' }); }
 
     const oid = newObjectId();
@@ -79,11 +70,15 @@ function createAttachmentsRouter(io) {
       // placeholder - never let a passed-in messageId touch someone else's
       // message or one that's already been finalized/isn't a file message.
       if (placeholder && String(placeholder.sender_oid) === String(req.chatUser.oid) && placeholder.delivery_status === 'sending') {
+        const caption = (req.body.caption || '').trim();
+        const duration = req.body.duration !== undefined && req.body.duration !== null && req.body.duration !== '' ? Number(req.body.duration) : 0;
         const updated = await store.updateMessage(messageId, {
           attachment_url: url,
           attachment_type: attachmentType,
           attachment_name: attachmentName,
           attachment_size: attachmentSize,
+          caption,
+          duration,
           delivery_status: 'sent',
         });
         const doc = socketMessageDoc(updated);
@@ -97,7 +92,20 @@ function createAttachmentsRouter(io) {
       message: 'File uploaded successfully',
       result: { url, attachmentType, attachmentName, attachmentSize },
     });
-  }));
+  });
+}
+
+function createAttachmentsRouter(io) {
+  const router = express.Router();
+
+  /**
+   * POST /v1/api/upload-chat-attachment - see makeUploadHandler's comment
+   * for the shared upload/finalize logic. Kept alongside the confirmed
+   * real path below since nothing rules out it also being called (this
+   * was our own best-effort guess at the endpoint name before the real one
+   * was confirmed via a live capture).
+   */
+  router.post('/upload-chat-attachment', requireAuth(), upload.single('file'), makeUploadHandler(io));
 
   /**
    * GET /v1/api/chat-attachment/:oid
@@ -118,4 +126,21 @@ function createAttachmentsRouter(io) {
   return router;
 }
 
-module.exports = { createAttachmentsRouter };
+/**
+ * POST /v1/admin/tickets/file-upload - the REAL endpoint, confirmed via a
+ * live captured multipart request (fields: duration, recipientId, caption,
+ * messageId, ticketId, file). Despite the "admin" path segment, the
+ * captured request's recipientId matched the ticket AGENT's oid (i.e. the
+ * CUSTOMER sending an attachment to their assigned agent) - same
+ * chat_auth_user()-style bearer token as every other /v1/api/* customer
+ * route, not the separate admin-panel JWT auth. "admin" here is
+ * apparently just this endpoint's own URL namespace on the real backend,
+ * not a restricted-to-admin-users route.
+ */
+function createTicketFileUploadRouter(io) {
+  const router = express.Router();
+  router.post('/tickets/file-upload', requireAuth(), upload.single('file'), makeUploadHandler(io));
+  return router;
+}
+
+module.exports = { createAttachmentsRouter, createTicketFileUploadRouter };

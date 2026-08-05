@@ -9,7 +9,7 @@ const { Server } = require('socket.io');
 const topicsRoute = require('./src/routes/topics');
 const chatDataRoute = require('./src/routes/chatData');
 const ticketsRoute = require('./src/routes/tickets');
-const { createAttachmentsRouter } = require('./src/routes/attachments');
+const { createAttachmentsRouter, createTicketFileUploadRouter } = require('./src/routes/attachments');
 const { createAdminRouter } = require('./src/routes/admin');
 const { attachChatSocket } = require('./src/socket');
 const { migrate } = require('./migrate');
@@ -107,6 +107,7 @@ app.use('/v1/api', topicsRoute);
 app.use('/v1/api', chatDataRoute);
 app.use('/v1/api', ticketsRoute);
 app.use('/v1/api', createAttachmentsRouter(io));
+app.use('/v1/admin', createTicketFileUploadRouter(io));
 
 // Admin panel - simple static page + its own REST API, both served from
 // this same service (operator's explicit choice over a separate service).
