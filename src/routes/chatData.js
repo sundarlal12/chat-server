@@ -47,7 +47,10 @@ router.get('/get-chat-data-of-recent-ticket', requireAuth(), asyncRoute(async (r
   res.json({
     status: 1,
     data: { ticket, messages, pagination },
-    message: 'Chat data fetched successfully',
+    // Confirmed via real captured responses (twice) - the live text is
+    // "retrieved", not "fetched" (which is what api/v1/api/get-chat-data-
+    // of-recent-ticket.php's own reference draft uses).
+    message: 'Chat data retrieved successfully',
   });
 }));
 
