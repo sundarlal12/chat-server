@@ -124,6 +124,12 @@ app.use((req, res) => res.status(404).json({ code: 404, message: 'Not found' }))
 // crashing the process (see asyncRoute.js for why that matters here).
 app.use((err, req, res, next) => {
   console.error(err);
+  // multer's own fileSize-limit error (LIMIT_FILE_SIZE) has no .httpStatus
+  // of its own - without this it fell through to a generic 500, which read
+  // no differently from an actual server error on the client side.
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({ code: 413, message: 'File is too large' });
+  }
   res.status(err.httpStatus || 500).json({
     code: err.httpStatus || 500,
     message: err.httpStatus ? err.message : 'Service temporarily unavailable',

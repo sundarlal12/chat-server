@@ -6,11 +6,20 @@ const store = require('../store');
 const { newObjectId } = require('../helpers');
 const { socketMessageDoc } = require('../socketDocs');
 const { ADMIN_ROOM } = require('../socket');
-const { classify, ALLOWED_DESCRIPTION } = require('../attachmentPolicy');
+const { classify, sniffKind, ALLOWED_DESCRIPTION } = require('../attachmentPolicy');
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 8 * 1024 * 1024 },
+  // Modern phone camera/gallery photos routinely run 8-15MB - the old 8MB
+  // cap was rejecting real gallery picks outright (fileFilter/limits both
+  // run before the route handler, so that's a bare 400/413 with no file
+  // stored, indistinguishable from "upload is broken" on the client side).
+  limits: { fileSize: 20 * 1024 * 1024 },
+  // Cheap pre-filter only, on the client-claimed Content-Type/filename -
+  // NOT the security boundary. makeUploadHandler below re-verifies the
+  // actual received bytes via sniffKind() and that's what's authoritative;
+  // this just avoids spending bandwidth/memory on an obviously-wrong type
+  // before the body is even read.
   fileFilter: (req, file, cb) => {
     const match = classify(file.mimetype, file.originalname);
     if (!match) {
@@ -18,7 +27,6 @@ const upload = multer({
       e.httpStatus = 400;
       return cb(e);
     }
-    file.attachmentMatch = match;
     cb(null, true);
   },
 });
@@ -47,19 +55,37 @@ function makeUploadHandler(io) {
   return asyncRoute(async (req, res) => {
     if (!req.file) { return res.status(400).json({ code: 400, message: 'file is required' }); }
 
+    // The security boundary: verify what was actually received, not what
+    // the client's multipart headers claimed. Content-Type and filename
+    // are both attacker-controlled - without this, a request could declare
+    // "image/jpeg" while sending arbitrary bytes (a PHP/HTML/script
+    // payload), which would then be stored AND later served back by
+    // GET /chat-attachment/:oid with that same claimed, unverified
+    // Content-Type. sniffKind() only recognizes the exact magic bytes of
+    // this policy's allowed formats, so anything else - including any
+    // attempt to sneak in a server-side-executable file type - is rejected
+    // outright here regardless of what it claimed to be.
+    const sniffed = sniffKind(req.file.buffer);
+    if (!sniffed) {
+      return res.status(400).json({ code: 400, message: `File content doesn't match a supported format - only ${ALLOWED_DESCRIPTION} are allowed` });
+    }
+
     const oid = newObjectId();
     await store.insertAttachment({
       oid,
       uploader_oid: String(req.chatUser.oid),
       original_name: req.file.originalname || '',
-      mime_type: req.file.mimetype || 'application/octet-stream',
+      // Verified mimetype, not the client-claimed req.file.mimetype - this
+      // is exactly what GET /chat-attachment/:oid later serves back as
+      // Content-Type, so it has to be trustworthy.
+      mime_type: sniffed.mimetypes[0],
       size_bytes: req.file.size || 0,
       data: req.file.buffer,
     });
 
     const base = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
     const url = `${base}/v1/api/chat-attachment/${oid}`;
-    const attachmentType = req.file.attachmentMatch.kind;
+    const attachmentType = sniffed.kind;
     const attachmentName = req.file.originalname || '';
     const attachmentSize = req.file.size || 0;
 
@@ -119,6 +145,10 @@ function createAttachmentsRouter(io) {
     const row = await store.getAttachment(req.params.oid);
     if (!row) { return res.status(404).json({ code: 404, message: 'Not found' }); }
     res.set('Content-Type', row.mime_type || 'application/octet-stream');
+    // Defense in depth on top of the upload-time content verification -
+    // stops a browser from ever content-sniffing a served attachment into
+    // something more dangerous than its stored (verified) Content-Type.
+    res.set('X-Content-Type-Options', 'nosniff');
     res.set('Content-Disposition', `inline; filename="${(row.original_name || 'file').replace(/"/g, '')}"`);
     res.send(row.data);
   }));
