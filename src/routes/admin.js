@@ -90,11 +90,15 @@ function createAdminRouter(io) {
     if (!ticket) { return res.status(404).json({ code: 404, message: 'Ticket not found' }); }
     const message = await insertAdminMessage(req.admin, ticket, req.body || {});
 
-    io.to(String(ticket.oid)).emit(chatMessageEventName(message), {
-      success: true,
-      message: 'Message sent successfully',
-      messageDoc: socketMessageDoc(message),
-    });
+    // "send-file-message" carries a plural `messageDocs` array (confirmed
+    // via a live captured trace), not the singular `messageDoc` the plain
+    // "send-message" event uses - same split as chatLogic.js's socket
+    // handlers for the same two events.
+    const eventName = chatMessageEventName(message);
+    const doc = socketMessageDoc(message);
+    io.to(String(ticket.oid)).emit(eventName, eventName === 'send-file-message'
+      ? { success: true, message: 'File message sent successfully', messageDocs: [doc] }
+      : { success: true, message: 'Message sent successfully', messageDoc: doc });
     io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: messageDoc(message).createdAt });
 
     res.json({ status: 1, data: messageDoc(message), message: 'Message sent successfully' });

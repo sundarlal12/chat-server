@@ -130,6 +130,22 @@ async function insertMessageRow(m) {
   return dbOne('SELECT * FROM chat_messages WHERE oid = :o LIMIT 1', { o: m.oid });
 }
 
+async function getMessageByOid(oid) {
+  return dbOne('SELECT * FROM chat_messages WHERE oid = :o LIMIT 1', { o: oid });
+}
+
+async function updateMessage(oid, fields) {
+  const sets = [];
+  const params = { oid, now: mysqlNow() };
+  for (const [k, v] of Object.entries(fields)) {
+    sets.push(`${k} = :${k}`);
+    params[k] = v;
+  }
+  sets.push('updated_at = :now');
+  await dbExec(`UPDATE chat_messages SET ${sets.join(', ')} WHERE oid = :oid`, params);
+  return getMessageByOid(oid);
+}
+
 async function markMessagesReadFor(ticketOid, receiverOid) {
   return dbExec(
     `UPDATE chat_messages SET read_status = 1, updated_at = :now
@@ -166,6 +182,8 @@ module.exports = {
   getMessages,
   countMessages,
   insertMessageRow,
+  getMessageByOid,
+  updateMessage,
   markMessagesReadFor,
   insertAttachment,
   getAttachment,
