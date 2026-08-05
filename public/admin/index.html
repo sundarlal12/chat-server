@@ -222,12 +222,15 @@
   function connectSocket() {
     socket = io({ path: '/socket.io/', query: { adminToken: token } });
     // The app has two separate incoming-message events - "send-message"
-    // (text) and "send-file-message" (anything with an attachment) - so
-    // both need a listener here, not just the first one.
+    // (text, singular `messageDoc`) and "send-file-message" (attachments,
+    // plural `messageDocs` - confirmed via a live captured trace) - so both
+    // need a listener here, not just the first one, and each carries a
+    // different shape.
     const onIncoming = (data) => {
-      if (!data || !data.success || !data.messageDoc) { return; }
-      if (String(data.messageDoc.ticketId) === String(currentTicketId)) {
-        appendMessage(data.messageDoc);
+      if (!data || !data.success) { return; }
+      const docs = data.messageDocs || (data.messageDoc ? [data.messageDoc] : []);
+      for (const doc of docs) {
+        if (String(doc.ticketId) === String(currentTicketId)) { appendMessage(doc); }
       }
     };
     socket.on('send-message', onIncoming);

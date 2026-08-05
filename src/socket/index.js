@@ -141,31 +141,34 @@ function attachChatSocket(io) {
 
     // Distinct from "send-message" - confirmed via the decompiled app
     // (SupportChatActivity has two SEPARATE Emitter.Listeners, "send-message"
-    // and "send-file-message"). The app never sends an attachment over
-    // "send-message" at all, so without this handler an attachment/voice
-    // note emit just went completely unanswered - no error, no response,
-    // nothing, which is exactly "can't send attachments" from the user's
-    // side. Payload is an ARRAY (one entry per attached file, for
-    // multi-select sends), each item normalized via
-    // normalizeFileMessageItem since the exact field names the client
-    // puts on the wire for the uploaded file's URL couldn't be fully
-    // confirmed from the decompiled bytecode.
+    // and "send-file-message"). Payload is an ARRAY (one entry per attached
+    // file, for multi-select sends), each item normalized via
+    // normalizeFileMessageItem.
+    //
+    // Confirmed via a live captured socket.io trace (a real send-file-message
+    // round trip, settling what the decompiled bytecode alone couldn't):
+    // the app's actual request payload is JUST
+    // [{recipientId, ticketId, messageType}] - no URL, no file bytes at all
+    // - and the real backend replies with ONE event carrying a plural
+    // `messageDocs` array (not one `messageDoc` emission per item, which is
+    // what this used to send), message text "File message sent
+    // successfully", and each doc as a "sending" placeholder (content
+    // "File", attachmentUrl null) since no attachment was actually
+    // referenced. See insertMessage in chatLogic.js for the placeholder
+    // logic this relies on.
     socket.on('send-file-message', async (payload) => {
-      // Diagnostic-only, temporary: the exact field name the real app uses
-      // for the uploaded file's URL couldn't be confirmed from decompiled
-      // bytecode alone (R8 obfuscation broke part of that method) - this
-      // logs the RAW payload so the next real attachment send from the app
-      // shows up verbatim in Railway's logs, settling it for good instead
-      // of continuing to guess. Remove once confirmed.
-      console.log('send-file-message raw payload:', JSON.stringify(payload));
-
       const items = Array.isArray(payload) ? payload : [payload];
-      for (const raw of items) {
-        try {
+      let ticketOid = null;
+
+      try {
+        const docs = [];
+        for (const raw of items) {
           let body = normalizeFileMessageItem(raw || {});
-          // No URL-shaped field found - the app may be sending the file
-          // itself as inline base64 instead of a pre-uploaded URL (see
-          // resolveInlineAttachment's comment for why that's plausible).
+          // No URL-shaped field found - best-effort fallback in case the
+          // app ever does embed the file as inline base64 instead of a
+          // pre-uploaded URL (see resolveInlineAttachment's comment); the
+          // real captured payload above has neither, which is exactly what
+          // falls through to chatLogic's "sending" placeholder.
           if (!body.attachmentUrl) {
             const inline = await resolveInlineAttachment(user, raw || {});
             if (inline) { body = { ...body, ...inline }; }
@@ -173,17 +176,18 @@ function attachChatSocket(io) {
           if (!body.ticketId) { throw httpError(400, 'ticketId is required'); }
           const ticket = await store.getTicketByOid(body.ticketId);
           if (!ticket) { throw httpError(404, 'Ticket not found'); }
+          ticketOid = String(ticket.oid);
 
           const message = await insertMessage(user, ticket, body);
-          const doc = socketMessageDoc(message);
-
-          socket.emit('send-file-message', { success: true, message: 'Message sent successfully', messageDoc: doc, isSent: true });
-          socket.to(String(ticket.oid)).emit('send-file-message', { success: true, message: 'Message sent successfully', messageDoc: doc });
-          io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: doc.createdAt });
-        } catch (e) {
-          socket.emit('send-file-message', { success: false, message: e.httpStatus ? e.message : 'Service temporarily unavailable' });
-          if (!e.httpStatus) { console.error(e); }
+          docs.push(socketMessageDoc(message));
         }
+
+        socket.emit('send-file-message', { success: true, message: 'File message sent successfully', messageDocs: docs, isSent: true });
+        socket.to(ticketOid).emit('send-file-message', { success: true, message: 'File message sent successfully', messageDocs: docs });
+        io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: ticketOid, lastActivity: docs[docs.length - 1]?.createdAt });
+      } catch (e) {
+        socket.emit('send-file-message', { success: false, message: e.httpStatus ? e.message : 'Service temporarily unavailable' });
+        if (!e.httpStatus) { console.error(e); }
       }
     });
 
@@ -262,8 +266,15 @@ function attachAdminHandlers(io, socket) {
       // Attachments have to go out under "send-file-message" - the app's
       // dedicated attachment listener - not "send-message", or the
       // customer's own app never picks it up (see the send-file-message
-      // handler above for the full story).
-      io.to(String(ticket.oid)).emit(chatMessageEventName(message), { success: true, message: 'Message sent successfully', messageDoc: doc });
+      // handler above for the full story). And that listener's confirmed
+      // real shape is a plural `messageDocs` array, not the singular
+      // `messageDoc` the plain "send-message" event uses - same split as
+      // the customer-side send-file-message handler above.
+      const eventName = chatMessageEventName(message);
+      const out = eventName === 'send-file-message'
+        ? { success: true, message: 'File message sent successfully', messageDocs: [doc] }
+        : { success: true, message: 'Message sent successfully', messageDoc: doc };
+      io.to(String(ticket.oid)).emit(eventName, out);
       io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: doc.createdAt });
     } catch (e) {
       socket.emit('admin-send-message', { success: false, message: e.httpStatus ? e.message : 'Service temporarily unavailable' });

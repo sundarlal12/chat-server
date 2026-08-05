@@ -200,10 +200,19 @@ async function createOrGetTicket(user, { topicId }) {
 }
 
 async function insertMessage(user, ticket, body) {
-  const content = (body.message || body.content || '').trim();
   const recipientId = (body.recipientId || ticket.recipient_oid || '').trim();
   const messageType = resolveMessageType(body);
   const attachmentUrl = (body.attachmentUrl || '').trim();
+
+  // Confirmed via a live captured send-file-message trace: the real app's
+  // payload for an attachment is JUST {recipientId, ticketId, messageType} -
+  // no URL, no file data, nothing else - and the real backend's own
+  // response to that exact payload is a "still sending" placeholder
+  // (content "File", attachmentUrl null, deliveryStatus "sending"), not a
+  // rejection. A file-type messageType with no URL is that placeholder
+  // case, not a missing-message error.
+  const isFileType = messageType >= 2 && messageType <= 6;
+  const content = (body.message || body.content || '').trim() || (isFileType && !attachmentUrl ? 'File' : '');
 
   if (!content && !attachmentUrl) { throw httpError(400, 'message is required'); }
   if (content.length > 4000) { throw httpError(400, 'Message is too long'); }
@@ -236,7 +245,7 @@ async function insertMessage(user, ticket, body) {
     content,
     caption: (body.caption || '').trim(),
     message_type: messageType,
-    delivery_status: 'delivered',
+    delivery_status: isFileType && !attachmentUrl ? 'sending' : 'delivered',
     attachment_url: attachmentUrl || null,
     attachment_type: (body.attachmentType || '').trim(),
     attachment_name: (body.attachmentName || '').trim(),
