@@ -12,13 +12,30 @@ const ALLOWED = [
   { mimetypes: ['image/jpeg'], exts: ['.jpg', '.jpeg'], kind: 'image', messageType: 2 },
   { mimetypes: ['image/png'], exts: ['.png'], kind: 'image', messageType: 2 },
   { mimetypes: ['image/gif'], exts: ['.gif'], kind: 'image', messageType: 2 },
+  // Modern Android camera/gallery apps default to WEBP (and some to HEIC)
+  // rather than JPEG - without these, a real customer's actual photo
+  // picker output was being rejected outright before ever reaching the
+  // route handler (fileFilter runs before any DB/URL logic), which reads
+  // as "attachment just doesn't upload" from the app's side.
+  { mimetypes: ['image/webp'], exts: ['.webp'], kind: 'image', messageType: 2 },
+  { mimetypes: ['image/heic', 'image/heif'], exts: ['.heic', '.heif'], kind: 'image', messageType: 2 },
   { mimetypes: ['video/mp4'], exts: ['.mp4'], kind: 'video', messageType: 3 },
+  { mimetypes: ['video/3gpp'], exts: ['.3gp'], kind: 'video', messageType: 3 },
   { mimetypes: ['audio/mpeg', 'audio/mp3'], exts: ['.mp3'], kind: 'audio', messageType: 5 },
   // Voice notes recorded in-browser (admin panel mic button) - MediaRecorder
   // can't produce mp3, only webm/ogg (opus) - the real app's own voice
   // notes are a DISTINCT messageType (6, not 5/audio) from the enum, so
   // these get their own "voice" kind rather than being lumped into "audio".
   { mimetypes: ['audio/webm', 'audio/ogg'], exts: ['.webm', '.ogg'], kind: 'voice', messageType: 6 },
+  // Android's own MediaRecorder (the in-app "hold to record" voice note UI)
+  // defaults to AAC in an m4a/3gp container, never mp3/webm - without this
+  // every real in-app voice note was being rejected the same way real
+  // photos were. Grouped with "voice" (not "audio") since an in-chat
+  // recorded note is the same UX category as the admin panel's mic button,
+  // not a shared audio file - unconfirmed against decompiled bytecode
+  // (no captured trace of this exists yet), best-effort based on what
+  // Android's recorder actually produces.
+  { mimetypes: ['audio/mp4', 'audio/m4a', 'audio/x-m4a', 'audio/3gpp', 'audio/aac'], exts: ['.m4a', '.aac', '.3gp'], kind: 'voice', messageType: 6 },
 ];
 
 const KIND_TO_MESSAGE_TYPE = { image: 2, video: 3, document: 4, audio: 5, voice: 6 };
@@ -33,7 +50,7 @@ function classify(mimetype, originalname) {
   return ALLOWED.find((a) => a.exts.includes(ext)) || null;
 }
 
-const ALLOWED_DESCRIPTION = 'images (jpg, png, gif), video (mp4), audio (mp3), or a recorded voice note';
+const ALLOWED_DESCRIPTION = 'images (jpg, png, gif, webp, heic), video (mp4, 3gp), audio (mp3), or a recorded voice note (m4a, aac, 3gp, webm, ogg)';
 
 /**
  * Magic-byte sniff, used when a socket-sent attachment arrives as inline
@@ -48,6 +65,7 @@ function sniffKind(buffer) {
   if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) { return ALLOWED.find((a) => a.mimetypes.includes('image/jpeg')); }
   if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) { return ALLOWED.find((a) => a.mimetypes.includes('image/png')); }
   if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) { return ALLOWED.find((a) => a.mimetypes.includes('image/gif')); }
+  if (b.length > 11 && b.slice(0, 4).toString('ascii') === 'RIFF' && b.slice(8, 12).toString('ascii') === 'WEBP') { return ALLOWED.find((a) => a.mimetypes.includes('image/webp')); }
   if (b.length > 11 && b.slice(4, 8).toString('ascii') === 'ftyp') { return ALLOWED.find((a) => a.mimetypes.includes('video/mp4')); }
   if ((b[0] === 0x49 && b[1] === 0x44 && b[2] === 0x33) || (b[0] === 0xff && (b[1] & 0xe0) === 0xe0)) { return ALLOWED.find((a) => a.mimetypes.includes('audio/mpeg')); }
   if (b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) { return ALLOWED.find((a) => a.mimetypes.includes('audio/webm')); }
