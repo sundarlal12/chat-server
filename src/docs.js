@@ -1,4 +1,4 @@
-const { iso } = require('./helpers');
+const { iso, parseMentionIds } = require('./helpers');
 
 /** Matches CreateTicketModel exactly - see api/v1/api/get-chat-data-of-recent-ticket.php's header comment. */
 function ticketDoc(row) {
@@ -45,13 +45,16 @@ function messageDoc(row) {
     messageType: Number(row.message_type || 0),
     readStatus: !!row.read_status,
     deliveryStatus: String(row.delivery_status || 'sent'),
+    mentionIds: parseMentionIds(row.mention_ids),
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
+    __v: 0,
     attachmentUrl: row.attachment_url || null,
     attachmentType: String(row.attachment_type || ''),
     attachmentName: String(row.attachment_name || ''),
     attachmentSize: row.attachment_size !== null && row.attachment_size !== undefined ? Number(row.attachment_size) : null,
     duration: row.duration !== null && row.duration !== undefined ? Number(row.duration) : null,
+    videoImage: row.video_image || null,
   };
 }
 

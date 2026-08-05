@@ -32,4 +32,16 @@ function mysqlNow() {
   return new Date().toISOString().slice(0, 19).replace('T', ' ');
 }
 
-module.exports = { newObjectId, isObjectId, iso, mysqlNow };
+/** mention_ids is stored as a JSON text column - parse it back into an array. */
+function parseMentionIds(raw) {
+  if (Array.isArray(raw)) { return raw; }
+  if (typeof raw !== 'string' || raw === '') { return []; }
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+module.exports = { newObjectId, isObjectId, iso, mysqlNow, parseMentionIds };

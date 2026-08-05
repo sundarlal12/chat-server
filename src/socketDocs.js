@@ -1,4 +1,4 @@
-const { iso } = require('./helpers');
+const { iso, parseMentionIds } = require('./helpers');
 
 /**
  * Doc shapes for the RAW socket.io protocol - confirmed against a real
@@ -81,18 +81,6 @@ function socketMessageDoc(m) {
     attachmentUrl: m.attachment_url || null,
     videoImage: m.video_image || null,
   };
-}
-
-/** mention_ids is stored as a JSON text column - parse it back into an array. */
-function parseMentionIds(raw) {
-  if (Array.isArray(raw)) { return raw; }
-  if (typeof raw !== 'string' || raw === '') { return []; }
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
 }
 
 /**
