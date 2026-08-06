@@ -93,12 +93,19 @@ function createAdminRouter(io) {
     // "send-file-message" carries a plural `messageDocs` array (confirmed
     // via a live captured trace), not the singular `messageDoc` the plain
     // "send-message" event uses - same split as chatLogic.js's socket
-    // handlers for the same two events.
+    // handlers for the same two events. ALSO broadcasting under
+    // "send-message" for attachments too - see the matching comment in
+    // socket/index.js's admin-send-message handler for why (reported: an
+    // admin-sent attachment doesn't render live on the customer side,
+    // only after they leave and reopen the chat).
     const eventName = chatMessageEventName(message);
     const doc = socketMessageDoc(message);
     io.to(String(ticket.oid)).emit(eventName, eventName === 'send-file-message'
       ? { success: true, message: 'File message sent successfully', messageDocs: [doc] }
       : { success: true, message: 'Message sent successfully', messageDoc: doc });
+    if (eventName === 'send-file-message') {
+      io.to(String(ticket.oid)).emit('send-message', { success: true, message: 'Message sent successfully', messageDoc: doc });
+    }
     io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: messageDoc(message).createdAt });
 
     res.json({ status: 1, data: messageDoc(message), message: 'Message sent successfully' });

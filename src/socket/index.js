@@ -152,6 +152,13 @@ function attachChatSocket(io) {
             ? { success: true, message: 'File message sent successfully', messageDocs: [autoDoc] }
             : { success: true, message: 'Message sent successfully', messageDoc: autoDoc };
           io.to(String(ticket.oid)).emit(eventName, out);
+          // Also under "send-message" for the image - see the matching
+          // comment on admin-send-message above for why (an unprompted
+          // attachment via send-file-message alone was reported not
+          // rendering live on the customer side).
+          if (eventName === 'send-file-message') {
+            io.to(String(ticket.oid)).emit('send-message', { success: true, message: 'Message sent successfully', messageDoc: autoDoc });
+          }
           io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: autoDoc.createdAt });
         }
       } catch (e) {
@@ -284,18 +291,30 @@ function attachAdminHandlers(io, socket) {
       const message = await insertAdminMessage(socket.admin, ticket, body);
       const doc = socketMessageDoc(message);
 
-      // Attachments have to go out under "send-file-message" - the app's
-      // dedicated attachment listener - not "send-message", or the
-      // customer's own app never picks it up (see the send-file-message
-      // handler above for the full story). And that listener's confirmed
-      // real shape is a plural `messageDocs` array, not the singular
-      // `messageDoc` the plain "send-message" event uses - same split as
-      // the customer-side send-file-message handler above.
+      // Attachments go out under "send-file-message" - the app's dedicated
+      // attachment listener - with its confirmed real shape (plural
+      // `messageDocs` array, not the singular `messageDoc` "send-message"
+      // uses). Reported: this arrives fine when the customer is the one
+      // sending (ack to their own request), but an unprompted attachment
+      // FROM the admin doesn't render live - only after the customer
+      // leaves the chat and comes back (a fresh REST fetch). The only real
+      // captured trace of "send-file-message" is a customer's own
+      // upload-ack, never an incoming one from someone else, so it's
+      // plausible the app's listener there only matches acks to its own
+      // in-flight upload and silently drops anything else. ALSO
+      // broadcasting under "send-message" (confirmed always rendering
+      // live, including admin-initiated ones) hedges against that - a
+      // customer client that already reads the un-hedged event correctly
+      // would just see the same message twice, which is a lesser problem
+      // than never seeing it until reload.
       const eventName = chatMessageEventName(message);
       const out = eventName === 'send-file-message'
         ? { success: true, message: 'File message sent successfully', messageDocs: [doc] }
         : { success: true, message: 'Message sent successfully', messageDoc: doc };
       io.to(String(ticket.oid)).emit(eventName, out);
+      if (eventName === 'send-file-message') {
+        io.to(String(ticket.oid)).emit('send-message', { success: true, message: 'Message sent successfully', messageDoc: doc });
+      }
       io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: doc.createdAt });
     } catch (e) {
       socket.emit('admin-send-message', { success: false, message: e.httpStatus ? e.message : 'Service temporarily unavailable' });

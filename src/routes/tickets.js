@@ -50,6 +50,13 @@ function createTicketsRouter(io) {
           ? { success: true, message: 'File message sent successfully', messageDocs: [doc] }
           : { success: true, message: 'Message sent successfully', messageDoc: doc };
         io.to(String(ticket.oid)).emit(eventName, out);
+        // Also under "send-message" for the image - see the matching
+        // comment in socket/index.js's admin-send-message handler for why
+        // (an unprompted attachment via send-file-message alone was
+        // reported not rendering live on the customer side).
+        if (eventName === 'send-file-message') {
+          io.to(String(ticket.oid)).emit('send-message', { success: true, message: 'Message sent successfully', messageDoc: doc });
+        }
         io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: doc.createdAt });
       }
     } catch (e) { handleError(res, e); }
