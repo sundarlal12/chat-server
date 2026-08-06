@@ -311,17 +311,20 @@ const DEPOSIT_KEYWORD_RE = /\b(deposit|add\s*(money|cash|funds?)|recharge|how\s*
  * value here means no prior customer message existed in this ticket
  * before the one just sent.
  *
- * Sends the image as its OWN message followed by a SEPARATE plain-text
- * message carrying the reply text, rather than relying on the image
- * message's own content/caption fields - putting the text there was tried
- * first and reported as showing only the image with no visible text, so
- * this instead reuses the plain-text message path already confirmed
- * working for every other text message in this service.
+ * A single image message carries the reply text via its `caption` field
+ * (content itself is left as the "File" placeholder, matching the one
+ * confirmed real image-message capture - an empty content was tried and
+ * the image didn't render at all, so content can't be empty even though
+ * caption is what actually displays). A separate follow-up text message
+ * was tried in between and dropped again (operator call - redundant once
+ * caption was confirmed to carry the text).
  *
- * Returns an array of the inserted message rows (image, then text), or []
- * if neither trigger holds, or the configured attachment oid doesn't
- * resolve to a real, verified image (see attachmentPolicy.js's sniffKind
- * for why content is verified rather than trusted).
+ * Returns an array (currently 0 or 1 message) rather than a single
+ * message-or-null so callers don't need special-casing if this ever grows
+ * back to multiple messages - empty if neither trigger holds, or the
+ * configured attachment oid doesn't resolve to a real, verified image (see
+ * attachmentPolicy.js's sniffKind for why content is verified rather than
+ * trusted).
  */
 async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message) {
   const topicOid = String(ticketBeforeThisMessage.topic_oid || '');
@@ -369,10 +372,8 @@ async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message)
     // message showing up as nothing, only the follow-up text message
     // visible, is exactly what was reported after this was blank).
     content: 'File',
-    // Also on the image itself (redundant with the separate text message
-    // below, by operator request) - in case the app reads the caption
-    // field for anything (e.g. a notification/preview) that the follow-up
-    // text message alone wouldn't cover.
+    // The actual visible text - confirmed this renders correctly as a
+    // caption on the image, no separate text message needed.
     caption: replyText,
     message_type: kind.messageType,
     attachment_url: `${base}/v1/api/chat-attachment/${DEPOSIT_GREETING_ATTACHMENT_OID}`,
@@ -381,19 +382,10 @@ async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message)
     attachment_size: attachment.size_bytes || 0,
   });
 
-  const textMessage = await store.insertMessageRow({
-    ...agentFields,
-    oid: newObjectId(),
-    content: replyText,
-    caption: '',
-    message_type: 1,
-    attachment_url: null,
-    attachment_type: '',
-    attachment_name: '',
-    attachment_size: 0,
-  });
-
-  return [imageMessage, textMessage];
+  // Operator call: the image's own caption already carries the text
+  // (see above), so a separate follow-up text message is redundant - just
+  // the one message now.
+  return [imageMessage];
 }
 
 /**
