@@ -362,7 +362,13 @@ async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message)
   const imageMessage = await store.insertMessageRow({
     ...agentFields,
     oid: newObjectId(),
-    content: '',
+    // Not empty - the one confirmed real image-message capture (a
+    // customer's own photo upload) always had content as "File", never
+    // empty, and the app's own rendering may depend on that being
+    // non-empty to reach the image-display path at all (an empty image
+    // message showing up as nothing, only the follow-up text message
+    // visible, is exactly what was reported after this was blank).
+    content: 'File',
     caption: '',
     message_type: kind.messageType,
     attachment_url: `${base}/v1/api/chat-attachment/${DEPOSIT_GREETING_ATTACHMENT_OID}`,
