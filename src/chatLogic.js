@@ -263,40 +263,64 @@ async function insertMessage(user, ticket, body) {
   return message;
 }
 
-// 'Deposit' topic's fixed oid - see migrate.js's seed data (confirmed via
-// papa776.har, same as the other two topic oids).
+// Topic oids - see migrate.js's seed data (confirmed via papa776.har).
 const DEPOSIT_TOPIC_OID = '6791e9794040440cc2242d75';
+const OTHERS_TOPIC_OID = '6791e98a4040440cc2242d7f';
 // Pre-uploaded via upload-chat-attachment - already sitting in this
 // service's own chat_attachments table (operator-provided oid), not a
 // hotlinked third-party URL.
 const DEPOSIT_GREETING_ATTACHMENT_OID = '6a742b82d676b662157803c4';
 const DEPOSIT_GREETING_TEXT = "Good morning! 🙏 Here's how to deposit";
 const GREETING_RE = /^(hi+|hello+|hey+|helo+|namaste|namaskar|good\s*(morning|afternoon|evening))\b/i;
+// Best-effort keyword set for "asking about depositing" - not confirmed
+// against any real transcript, refine with actual customer phrasing as it
+// comes in (same "best-effort, unconfirmed" caveat as the voice-note
+// format guesses earlier in this file's history).
+const DEPOSIT_KEYWORD_RE = /\b(deposit|add\s*(money|cash|funds?)|recharge|how\s*(do|to)\s*i?\s*pay|payment|paisa|minimum\s*deposit)\b/i;
 
 /**
- * Operator-requested auto-reply: the agent identity greets back with a
- * deposit-instructions image the FIRST time a customer's message in a
- * "Deposit"-topic ticket reads like a greeting (hi/hello/hey/namaste/
- * "good morning" etc.). Call this after insertMessage() succeeds, from a
- * caller that has `io` to broadcast the result (see routes/tickets.js and
- * socket/index.js's send-message handlers) - this function itself stays
- * io-agnostic like the rest of chatLogic.js, matching insertMessage.
+ * Operator-requested auto-reply: the agent identity replies with a
+ * deposit-instructions image whenever either of two independent triggers
+ * fires on a customer's message:
  *
- * "First message" is read off `ticket.last_customer_message` as it stood
- * BEFORE this call's own insertMessage() - insertMessage() unconditionally
- * overwrites it on every customer message, so an empty value here means no
- * prior customer message existed in this ticket before the one just sent.
+ *  1. It's the customer's FIRST message in a "Deposit"-topic ticket, and
+ *     it reads like a plain greeting (hi/hello/hey/namaste/"good morning"
+ *     etc.) - the original request.
+ *  2. It's ANY message, anywhere in the conversation, in a "Deposit" OR
+ *     "Others" ticket, that mentions depositing at all (DEPOSIT_KEYWORD_RE)
+ *     - the follow-up request, since customers under "Others" sometimes
+ *     ask about deposits too, and may ask more than once, not just as
+ *     their first message. Unlike trigger 1, this one can fire more than
+ *     once per ticket by design (operator explicitly accepted that
+ *     tradeoff over missing a later ask).
  *
- * Returns the auto-reply message row, or null if any condition doesn't
- * hold (wrong topic, not the first message, message doesn't read as a
- * greeting, or the configured attachment oid doesn't resolve to a real,
- * verified image - see attachmentPolicy.js's sniffKind for why content is
- * verified rather than trusted).
+ * Call this after insertMessage() succeeds, from a caller that has `io` to
+ * broadcast the result (see routes/tickets.js and socket/index.js's
+ * send-message handlers) - this function itself stays io-agnostic like
+ * the rest of chatLogic.js, matching insertMessage.
+ *
+ * "First message" (trigger 1 only) is read off `ticket.last_customer_message`
+ * as it stood BEFORE this call's own insertMessage() - insertMessage()
+ * unconditionally overwrites it on every customer message, so an empty
+ * value here means no prior customer message existed in this ticket
+ * before the one just sent.
+ *
+ * Returns the auto-reply message row, or null if neither trigger holds, or
+ * the configured attachment oid doesn't resolve to a real, verified image
+ * (see attachmentPolicy.js's sniffKind for why content is verified rather
+ * than trusted).
  */
 async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message) {
-  if (ticketBeforeThisMessage.last_customer_message) { return null; }
-  if (String(ticketBeforeThisMessage.topic_oid || '') !== DEPOSIT_TOPIC_OID) { return null; }
-  if (!GREETING_RE.test(String(message.content || '').trim())) { return null; }
+  const topicOid = String(ticketBeforeThisMessage.topic_oid || '');
+  const content = String(message.content || '').trim();
+
+  const isFirstDepositGreeting = !ticketBeforeThisMessage.last_customer_message
+    && topicOid === DEPOSIT_TOPIC_OID
+    && GREETING_RE.test(content);
+  const isDepositKeywordMention = (topicOid === DEPOSIT_TOPIC_OID || topicOid === OTHERS_TOPIC_OID)
+    && DEPOSIT_KEYWORD_RE.test(content);
+
+  if (!isFirstDepositGreeting && !isDepositKeywordMention) { return null; }
 
   const attachment = await store.getAttachment(DEPOSIT_GREETING_ATTACHMENT_OID);
   if (!attachment) { return null; }
