@@ -6,6 +6,7 @@ const {
   normalizeFileMessageItem, resolveInlineAttachment, maybeAutoReplyToDepositGreeting,
 } = require('../chatLogic');
 const { rawTicketDoc, createdTicketDoc, socketMessageDoc, chatMessageEventName } = require('../socketDocs');
+const { sendChatPushNotification, chatPushBody } = require('../push');
 
 /** Every admin socket joins this room on connect, so an `io.to(ADMIN_ROOM).emit(...)` reaches every logged-in admin regardless of which ticket (if any) they currently have open - used for the ticket-list "something happened" live signal. */
 const ADMIN_ROOM = '__admins__';
@@ -316,6 +317,15 @@ function attachAdminHandlers(io, socket) {
         io.to(String(ticket.oid)).emit('send-message', { success: true, message: 'Message sent successfully', messageDoc: doc });
       }
       io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: doc.createdAt });
+
+      // Not awaited - see the matching comment in admin.js's REST route
+      // for why (push failures are self-contained in push.js and
+      // shouldn't hold up this handler).
+      sendChatPushNotification(ticket.customer_fcm_token, {
+        title: String(ticket.agent_name || 'Support'),
+        body: chatPushBody(message),
+        ticketId: ticket.oid,
+      });
     } catch (e) {
       socket.emit('admin-send-message', { success: false, message: e.httpStatus ? e.message : 'Service temporarily unavailable' });
       if (!e.httpStatus) { console.error(e); }

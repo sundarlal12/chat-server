@@ -38,6 +38,13 @@ async function getUserInfo(token) {
     lastName: String(result.lastName || ''),
     profilePic: String(result.profilePic || ''),
     isBanned: !!result.isBanned,
+    // For push notifications (see src/push.js) - the PHP UserInfo model
+    // carries this straight off the users table (build_user_info() in the
+    // PHP repo). Cached onto the ticket row (see chatLogic.js) the moment
+    // we see it, since an admin-initiated notification has no other way
+    // to reach the customer's own current fcmToken - only the customer's
+    // own authenticated requests ever see it.
+    fcmToken: String(result.fcmToken || ''),
   };
   cache.set(token, { user, expiresAt: Date.now() + CACHE_TTL_MS });
   return user;

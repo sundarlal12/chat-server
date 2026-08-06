@@ -9,6 +9,7 @@ const { ADMIN_ROOM } = require('../socket');
 const store = require('../store');
 const { newObjectId } = require('../helpers');
 const { classify, ALLOWED_DESCRIPTION } = require('../attachmentPolicy');
+const { sendChatPushNotification, chatPushBody } = require('../push');
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -109,6 +110,17 @@ function createAdminRouter(io) {
     io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: messageDoc(message).createdAt });
 
     res.json({ status: 1, data: messageDoc(message), message: 'Message sent successfully' });
+
+    // Not awaited - a push failure/slow FCM call shouldn't hold up the
+    // response, and sendChatPushNotification already swallows its own
+    // errors (see push.js). Reaches the customer even if their socket
+    // isn't connected right now (app closed/backgrounded) - the DB write
+    // and room broadcast above already happened regardless.
+    sendChatPushNotification(ticket.customer_fcm_token, {
+      title: String(ticket.agent_name || 'Support'),
+      body: chatPushBody(message),
+      ticketId: ticket.oid,
+    });
   }));
 
   /** POST /admin/api/upload - same chat_attachments BLOB storage the customer-side upload uses. */

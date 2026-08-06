@@ -167,6 +167,7 @@ async function createOrGetTicket(user, { topicId }) {
     customer_name: customerName,
     customer_full_name: customerFullName,
     customer_profile_pic: String(user.profilePic || ''),
+    customer_fcm_token: String(user.fcmToken || ''),
   });
 
   // Sender is the ticket's own agent identity, receiver the customer -
@@ -255,10 +256,13 @@ async function insertMessage(user, ticket, body) {
     video_image: null,
   });
 
-  await store.updateTicket(String(ticket.oid), {
-    last_activity: message.created_at,
-    last_customer_message: message.created_at,
-  });
+  // Refreshed on every customer message (not just at ticket creation) so a
+  // long-lived ticket's cached token doesn't go stale if it rotates - see
+  // push.js for why this cached value is the only way an admin-initiated
+  // notification can reach the customer's current device.
+  const ticketUpdate = { last_activity: message.created_at, last_customer_message: message.created_at };
+  if (user.fcmToken) { ticketUpdate.customer_fcm_token = String(user.fcmToken); }
+  await store.updateTicket(String(ticket.oid), ticketUpdate);
 
   return message;
 }

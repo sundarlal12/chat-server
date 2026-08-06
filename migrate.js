@@ -80,6 +80,12 @@ async function migrate() {
   await ensureColumn('chat_tickets', 'customer_name', "VARCHAR(120) NOT NULL DEFAULT ''");
   await ensureColumn('chat_tickets', 'customer_full_name', "VARCHAR(120) NOT NULL DEFAULT ''");
   await ensureColumn('chat_tickets', 'customer_profile_pic', "VARCHAR(512) NOT NULL DEFAULT ''");
+  // Cached from the PHP UserInfo model (see phpApi.js) whenever the
+  // customer's own authenticated requests see it - the only way an
+  // admin-initiated push notification (src/push.js) can reach the
+  // customer's current device, since only the customer's own requests
+  // ever carry their fcmToken.
+  await ensureColumn('chat_tickets', 'customer_fcm_token', "VARCHAR(255) NOT NULL DEFAULT ''");
 
   await createTableIfMissing('chat_messages', `
     CREATE TABLE chat_messages (
