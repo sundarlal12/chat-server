@@ -263,6 +263,73 @@ async function insertMessage(user, ticket, body) {
   return message;
 }
 
+// 'Deposit' topic's fixed oid - see migrate.js's seed data (confirmed via
+// papa776.har, same as the other two topic oids).
+const DEPOSIT_TOPIC_OID = '6791e9794040440cc2242d75';
+// Pre-uploaded via upload-chat-attachment - already sitting in this
+// service's own chat_attachments table (operator-provided oid), not a
+// hotlinked third-party URL.
+const DEPOSIT_GREETING_ATTACHMENT_OID = '6a741ea8606c5e47b3a8657e';
+const DEPOSIT_GREETING_TEXT = "Good morning! 🙏 Here's how to deposit";
+const GREETING_RE = /^(hi+|hello+|hey+|helo+|namaste|namaskar|good\s*(morning|afternoon|evening))\b/i;
+
+/**
+ * Operator-requested auto-reply: the agent identity greets back with a
+ * deposit-instructions image the FIRST time a customer's message in a
+ * "Deposit"-topic ticket reads like a greeting (hi/hello/hey/namaste/
+ * "good morning" etc.). Call this after insertMessage() succeeds, from a
+ * caller that has `io` to broadcast the result (see routes/tickets.js and
+ * socket/index.js's send-message handlers) - this function itself stays
+ * io-agnostic like the rest of chatLogic.js, matching insertMessage.
+ *
+ * "First message" is read off `ticket.last_customer_message` as it stood
+ * BEFORE this call's own insertMessage() - insertMessage() unconditionally
+ * overwrites it on every customer message, so an empty value here means no
+ * prior customer message existed in this ticket before the one just sent.
+ *
+ * Returns the auto-reply message row, or null if any condition doesn't
+ * hold (wrong topic, not the first message, message doesn't read as a
+ * greeting, or the configured attachment oid doesn't resolve to a real,
+ * verified image - see attachmentPolicy.js's sniffKind for why content is
+ * verified rather than trusted).
+ */
+async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message) {
+  if (ticketBeforeThisMessage.last_customer_message) { return null; }
+  if (String(ticketBeforeThisMessage.topic_oid || '') !== DEPOSIT_TOPIC_OID) { return null; }
+  if (!GREETING_RE.test(String(message.content || '').trim())) { return null; }
+
+  const attachment = await store.getAttachment(DEPOSIT_GREETING_ATTACHMENT_OID);
+  if (!attachment) { return null; }
+  const kind = sniffKind(attachment.data);
+  if (!kind) { return null; }
+
+  const ticket = ticketBeforeThisMessage;
+  const base = process.env.PUBLIC_BASE_URL || '';
+  return store.insertMessageRow({
+    oid: newObjectId(),
+    ticket_oid: String(ticket.oid),
+    sender_oid: String(ticket.recipient_oid || ''),
+    sender_name: String(ticket.agent_name || ''),
+    sender_full_name: String(ticket.agent_full_name || ''),
+    sender_profile_pic: String(ticket.agent_profile_pic || ''),
+    receiver_oid: String(ticket.user_oid),
+    receiver_name: String(ticket.customer_name || ''),
+    receiver_full_name: String(ticket.customer_full_name || ''),
+    receiver_profile_pic: String(ticket.customer_profile_pic || ''),
+    content: DEPOSIT_GREETING_TEXT,
+    caption: '',
+    message_type: kind.messageType,
+    delivery_status: 'delivered',
+    attachment_url: `${base}/v1/api/chat-attachment/${DEPOSIT_GREETING_ATTACHMENT_OID}`,
+    attachment_type: kind.kind,
+    attachment_name: attachment.original_name || '',
+    attachment_size: attachment.size_bytes || 0,
+    duration: 0,
+    mention_ids: JSON.stringify([]),
+    video_image: null,
+  });
+}
+
 /**
  * Admin/agent side of send-message - sender is the TICKET's own agent
  * identity (so it matches whatever name the customer already sees for
@@ -338,5 +405,5 @@ function httpError(status, message) {
 
 module.exports = {
   createOrGetTicket, insertMessage, insertAdminMessage, markMessagesRead, submitRating, httpError,
-  normalizeFileMessageItem, resolveInlineAttachment,
+  normalizeFileMessageItem, resolveInlineAttachment, maybeAutoReplyToDepositGreeting,
 };

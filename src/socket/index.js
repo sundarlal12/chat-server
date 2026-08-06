@@ -3,7 +3,7 @@ const { verifyAdminToken } = require('../adminAuth');
 const store = require('../store');
 const {
   createOrGetTicket, insertMessage, insertAdminMessage, markMessagesRead, submitRating, httpError,
-  normalizeFileMessageItem, resolveInlineAttachment,
+  normalizeFileMessageItem, resolveInlineAttachment, maybeAutoReplyToDepositGreeting,
 } = require('../chatLogic');
 const { rawTicketDoc, createdTicketDoc, socketMessageDoc, chatMessageEventName } = require('../socketDocs');
 
@@ -133,6 +133,19 @@ function attachChatSocket(io) {
         socket.emit('send-message', { success: true, message: 'Message sent successfully', messageDoc: doc, isSent: true });
         socket.to(String(ticket.oid)).emit('send-message', { success: true, message: 'Message sent successfully', messageDoc: doc });
         io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: doc.createdAt });
+
+        // `ticket` is still the pre-message snapshot fetched above - see
+        // chatLogic.js's maybeAutoReplyToDepositGreeting for why that's
+        // exactly what it needs to tell a first message apart from a later
+        // one. Broadcast to the whole room (not just socket.to, which
+        // excludes the sender) since this is the AGENT talking, not the
+        // customer - the customer sending the greeting needs to see it too.
+        const autoReply = await maybeAutoReplyToDepositGreeting(ticket, message);
+        if (autoReply) {
+          const autoDoc = socketMessageDoc(autoReply);
+          io.to(String(ticket.oid)).emit('send-message', { success: true, message: 'Message sent successfully', messageDoc: autoDoc });
+          io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: autoDoc.createdAt });
+        }
       } catch (e) {
         socket.emit('send-message', { success: false, message: e.httpStatus ? e.message : 'Service temporarily unavailable' });
         if (!e.httpStatus) { console.error(e); }
