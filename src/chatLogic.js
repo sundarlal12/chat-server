@@ -369,7 +369,11 @@ async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message)
     // message showing up as nothing, only the follow-up text message
     // visible, is exactly what was reported after this was blank).
     content: 'File',
-    caption: '',
+    // Also on the image itself (redundant with the separate text message
+    // below, by operator request) - in case the app reads the caption
+    // field for anything (e.g. a notification/preview) that the follow-up
+    // text message alone wouldn't cover.
+    caption: replyText,
     message_type: kind.messageType,
     attachment_url: `${base}/v1/api/chat-attachment/${DEPOSIT_GREETING_ATTACHMENT_OID}`,
     attachment_type: kind.kind,
