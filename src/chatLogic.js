@@ -347,8 +347,15 @@ async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message)
     receiver_name: String(ticket.customer_name || ''),
     receiver_full_name: String(ticket.customer_full_name || ''),
     receiver_profile_pic: String(ticket.customer_profile_pic || ''),
+    // Set on BOTH fields - a confirmed real image-message capture had
+    // content just as a generic "File" placeholder with the actual
+    // visible text in caption instead, so content alone isn't reliably
+    // what the app renders for an image message. Duplicating into both
+    // means the text shows up regardless of which one it actually reads,
+    // instead of guessing wrong again (see the "shared image with no
+    // text" report this fixes).
     content: replyText,
-    caption: '',
+    caption: replyText,
     message_type: kind.messageType,
     delivery_status: 'delivered',
     attachment_url: `${base}/v1/api/chat-attachment/${DEPOSIT_GREETING_ATTACHMENT_OID}`,
