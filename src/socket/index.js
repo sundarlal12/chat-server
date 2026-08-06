@@ -318,14 +318,19 @@ function attachAdminHandlers(io, socket) {
       }
       io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: doc.createdAt });
 
+      // Skip the push if the customer is already live in this ticket's
+      // room - they'll see the message arrive instantly via the emits
+      // above, so a push there would be redundant (reported as wrong).
       // Not awaited - see the matching comment in admin.js's REST route
       // for why (push failures are self-contained in push.js and
       // shouldn't hold up this handler).
-      sendChatPushNotification(ticket.customer_fcm_token, {
-        title: String(ticket.agent_name || 'Support'),
-        body: chatPushBody(message),
-        ticketId: ticket.oid,
-      });
+      if (!isCustomerConnected(io, ticket.oid)) {
+        sendChatPushNotification(ticket.customer_fcm_token, {
+          title: String(ticket.agent_name || 'Support'),
+          body: chatPushBody(message),
+          ticketId: ticket.oid,
+        });
+      }
     } catch (e) {
       socket.emit('admin-send-message', { success: false, message: e.httpStatus ? e.message : 'Service temporarily unavailable' });
       if (!e.httpStatus) { console.error(e); }
@@ -333,4 +338,27 @@ function attachAdminHandlers(io, socket) {
   });
 }
 
-module.exports = { attachChatSocket, ADMIN_ROOM };
+/**
+ * Whether the CUSTOMER (not an admin who's also viewing this ticket) has
+ * a live socket currently in this ticket's room - used to skip the push
+ * notification when they're already looking at the chat and will see the
+ * message arrive live (reported: getting a push while already in the open
+ * chat is wrong/redundant). Reads socket.io's own local room/socket
+ * registries directly (io.sockets.adapter.rooms / io.sockets.sockets) -
+ * synchronous and returns the real Socket instances (with the .isAdmin
+ * flag the auth middleware above sets), unlike the async fetchSockets()
+ * API which only exposes a serialized subset of each socket's data and
+ * wouldn't carry that flag. Single-process only (no Redis adapter is
+ * configured here) - fine for how this service is actually deployed.
+ */
+function isCustomerConnected(io, ticketOid) {
+  const room = io.sockets.adapter.rooms.get(String(ticketOid));
+  if (!room) { return false; }
+  for (const socketId of room) {
+    const s = io.sockets.sockets.get(socketId);
+    if (s && !s.isAdmin) { return true; }
+  }
+  return false;
+}
+
+module.exports = { attachChatSocket, ADMIN_ROOM, isCustomerConnected };

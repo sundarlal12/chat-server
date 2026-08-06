@@ -5,7 +5,7 @@ const { verifyPassword, issueAdminToken, requireAdminAuth } = require('../adminA
 const { insertAdminMessage } = require('../chatLogic');
 const { ticketDoc, messageDoc } = require('../docs');
 const { socketMessageDoc, chatMessageEventName } = require('../socketDocs');
-const { ADMIN_ROOM } = require('../socket');
+const { ADMIN_ROOM, isCustomerConnected } = require('../socket');
 const store = require('../store');
 const { newObjectId } = require('../helpers');
 const { classify, ALLOWED_DESCRIPTION } = require('../attachmentPolicy');
@@ -111,16 +111,19 @@ function createAdminRouter(io) {
 
     res.json({ status: 1, data: messageDoc(message), message: 'Message sent successfully' });
 
-    // Not awaited - a push failure/slow FCM call shouldn't hold up the
-    // response, and sendChatPushNotification already swallows its own
-    // errors (see push.js). Reaches the customer even if their socket
-    // isn't connected right now (app closed/backgrounded) - the DB write
-    // and room broadcast above already happened regardless.
-    sendChatPushNotification(ticket.customer_fcm_token, {
-      title: String(ticket.agent_name || 'Support'),
-      body: chatPushBody(message),
-      ticketId: ticket.oid,
-    });
+    // Skip if the customer is already live in this ticket's room - they'll
+    // see the message arrive instantly via the broadcast above, so a push
+    // there would be redundant (reported as wrong). Not awaited - a push
+    // failure/slow FCM call shouldn't hold up the response, and
+    // sendChatPushNotification already swallows its own errors (see
+    // push.js).
+    if (!isCustomerConnected(io, ticket.oid)) {
+      sendChatPushNotification(ticket.customer_fcm_token, {
+        title: String(ticket.agent_name || 'Support'),
+        body: chatPushBody(message),
+        ticketId: ticket.oid,
+      });
+    }
   }));
 
   /** POST /admin/api/upload - same chat_attachments BLOB storage the customer-side upload uses. */
