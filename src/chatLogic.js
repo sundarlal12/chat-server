@@ -269,7 +269,7 @@ const DEPOSIT_TOPIC_OID = '6791e9794040440cc2242d75';
 // Pre-uploaded via upload-chat-attachment - already sitting in this
 // service's own chat_attachments table (operator-provided oid), not a
 // hotlinked third-party URL.
-const DEPOSIT_GREETING_ATTACHMENT_OID = '6a741ea8606c5e47b3a8657e';
+const DEPOSIT_GREETING_ATTACHMENT_OID = '6a742b82d676b662157803c4';
 const DEPOSIT_GREETING_TEXT = "Good morning! 🙏 Here's how to deposit";
 const GREETING_RE = /^(hi+|hello+|hey+|helo+|namaste|namaskar|good\s*(morning|afternoon|evening))\b/i;
 
