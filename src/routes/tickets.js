@@ -2,7 +2,7 @@ const express = require('express');
 const { requireAuth } = require('../auth');
 const { createOrGetTicket, insertMessage, markMessagesRead, submitRating, maybeAutoReplyToDepositGreeting } = require('../chatLogic');
 const { ticketDoc, messageDoc } = require('../docs');
-const { socketMessageDoc } = require('../socketDocs');
+const { socketMessageDoc, chatMessageEventName } = require('../socketDocs');
 const { ADMIN_ROOM } = require('../socket');
 const store = require('../store');
 
@@ -39,11 +39,17 @@ function createTicketsRouter(io) {
       // maybeAutoReplyToDepositGreeting needs to tell "first customer message" apart
       // from a later one. Broadcast-only (REST has no other push channel back to the
       // customer) - the customer's own client is expected to already be in this
-      // ticket's socket room, same as an admin reply.
-      const autoReply = await maybeAutoReplyToDepositGreeting(ticket, message);
-      if (autoReply) {
-        const doc = socketMessageDoc(autoReply);
-        io.to(String(ticket.oid)).emit('send-message', { success: true, message: 'Message sent successfully', messageDoc: doc });
+      // ticket's socket room, same as an admin reply. Sends the image and its
+      // follow-up text as two separate messages/events, in order - see
+      // maybeAutoReplyToDepositGreeting's own comment for why.
+      const autoReplies = await maybeAutoReplyToDepositGreeting(ticket, message);
+      for (const reply of autoReplies) {
+        const doc = socketMessageDoc(reply);
+        const eventName = chatMessageEventName(reply);
+        const out = eventName === 'send-file-message'
+          ? { success: true, message: 'File message sent successfully', messageDocs: [doc] }
+          : { success: true, message: 'Message sent successfully', messageDoc: doc };
+        io.to(String(ticket.oid)).emit(eventName, out);
         io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: doc.createdAt });
       }
     } catch (e) { handleError(res, e); }

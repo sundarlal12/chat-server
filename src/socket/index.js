@@ -140,10 +140,18 @@ function attachChatSocket(io) {
         // one. Broadcast to the whole room (not just socket.to, which
         // excludes the sender) since this is the AGENT talking, not the
         // customer - the customer sending the greeting needs to see it too.
-        const autoReply = await maybeAutoReplyToDepositGreeting(ticket, message);
-        if (autoReply) {
-          const autoDoc = socketMessageDoc(autoReply);
-          io.to(String(ticket.oid)).emit('send-message', { success: true, message: 'Message sent successfully', messageDoc: autoDoc });
+        // Sends the image and its follow-up text as two separate
+        // messages/events, in order - see maybeAutoReplyToDepositGreeting's
+        // own comment for why, and chatMessageEventName for why each one
+        // may go out under a different event name/shape.
+        const autoReplies = await maybeAutoReplyToDepositGreeting(ticket, message);
+        for (const reply of autoReplies) {
+          const autoDoc = socketMessageDoc(reply);
+          const eventName = chatMessageEventName(reply);
+          const out = eventName === 'send-file-message'
+            ? { success: true, message: 'File message sent successfully', messageDocs: [autoDoc] }
+            : { success: true, message: 'Message sent successfully', messageDoc: autoDoc };
+          io.to(String(ticket.oid)).emit(eventName, out);
           io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: autoDoc.createdAt });
         }
       } catch (e) {

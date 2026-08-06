@@ -269,7 +269,7 @@ const OTHERS_TOPIC_OID = '6791e98a4040440cc2242d7f';
 // Pre-uploaded via upload-chat-attachment - already sitting in this
 // service's own chat_attachments table (operator-provided oid), not a
 // hotlinked third-party URL.
-const DEPOSIT_GREETING_ATTACHMENT_OID = '6a742b82d676b662157803c4';
+const DEPOSIT_GREETING_ATTACHMENT_OID = '6a74378327acff9a7d355dcf';
 const DEPOSIT_GREETING_TEXT = "Good morning! 🙏 Here's how to deposit";
 // Separate text for the keyword trigger (below) - it can fire any time in
 // the conversation, not just as a first-message greeting, so "Good
@@ -301,7 +301,7 @@ const DEPOSIT_KEYWORD_RE = /\b(deposit|add\s*(money|cash|funds?)|recharge|how\s*
  *     this can fire at any time of day, not just as an opening greeting).
  *
  * Call this after insertMessage() succeeds, from a caller that has `io` to
- * broadcast the result (see routes/tickets.js and socket/index.js's
+ * broadcast the result(s) (see routes/tickets.js and socket/index.js's
  * send-message handlers) - this function itself stays io-agnostic like
  * the rest of chatLogic.js, matching insertMessage.
  *
@@ -311,10 +311,17 @@ const DEPOSIT_KEYWORD_RE = /\b(deposit|add\s*(money|cash|funds?)|recharge|how\s*
  * value here means no prior customer message existed in this ticket
  * before the one just sent.
  *
- * Returns the auto-reply message row, or null if neither trigger holds, or
- * the configured attachment oid doesn't resolve to a real, verified image
- * (see attachmentPolicy.js's sniffKind for why content is verified rather
- * than trusted).
+ * Sends the image as its OWN message followed by a SEPARATE plain-text
+ * message carrying the reply text, rather than relying on the image
+ * message's own content/caption fields - putting the text there was tried
+ * first and reported as showing only the image with no visible text, so
+ * this instead reuses the plain-text message path already confirmed
+ * working for every other text message in this service.
+ *
+ * Returns an array of the inserted message rows (image, then text), or []
+ * if neither trigger holds, or the configured attachment oid doesn't
+ * resolve to a real, verified image (see attachmentPolicy.js's sniffKind
+ * for why content is verified rather than trusted).
  */
 async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message) {
   const topicOid = String(ticketBeforeThisMessage.topic_oid || '');
@@ -326,18 +333,17 @@ async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message)
   const isDepositKeywordMention = (topicOid === DEPOSIT_TOPIC_OID || topicOid === OTHERS_TOPIC_OID)
     && DEPOSIT_KEYWORD_RE.test(content);
 
-  if (!isFirstDepositGreeting && !isDepositKeywordMention) { return null; }
+  if (!isFirstDepositGreeting && !isDepositKeywordMention) { return []; }
   const replyText = isFirstDepositGreeting ? DEPOSIT_GREETING_TEXT : DEPOSIT_KEYWORD_TEXT;
 
   const attachment = await store.getAttachment(DEPOSIT_GREETING_ATTACHMENT_OID);
-  if (!attachment) { return null; }
+  if (!attachment) { return []; }
   const kind = sniffKind(attachment.data);
-  if (!kind) { return null; }
+  if (!kind) { return []; }
 
   const ticket = ticketBeforeThisMessage;
   const base = process.env.PUBLIC_BASE_URL || '';
-  return store.insertMessageRow({
-    oid: newObjectId(),
+  const agentFields = {
     ticket_oid: String(ticket.oid),
     sender_oid: String(ticket.recipient_oid || ''),
     sender_name: String(ticket.agent_name || ''),
@@ -347,25 +353,37 @@ async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message)
     receiver_name: String(ticket.customer_name || ''),
     receiver_full_name: String(ticket.customer_full_name || ''),
     receiver_profile_pic: String(ticket.customer_profile_pic || ''),
-    // Set on BOTH fields - a confirmed real image-message capture had
-    // content just as a generic "File" placeholder with the actual
-    // visible text in caption instead, so content alone isn't reliably
-    // what the app renders for an image message. Duplicating into both
-    // means the text shows up regardless of which one it actually reads,
-    // instead of guessing wrong again (see the "shared image with no
-    // text" report this fixes).
-    content: replyText,
-    caption: replyText,
-    message_type: kind.messageType,
     delivery_status: 'delivered',
+    duration: 0,
+    mention_ids: JSON.stringify([]),
+    video_image: null,
+  };
+
+  const imageMessage = await store.insertMessageRow({
+    ...agentFields,
+    oid: newObjectId(),
+    content: '',
+    caption: '',
+    message_type: kind.messageType,
     attachment_url: `${base}/v1/api/chat-attachment/${DEPOSIT_GREETING_ATTACHMENT_OID}`,
     attachment_type: kind.kind,
     attachment_name: attachment.original_name || '',
     attachment_size: attachment.size_bytes || 0,
-    duration: 0,
-    mention_ids: JSON.stringify([]),
-    video_image: null,
   });
+
+  const textMessage = await store.insertMessageRow({
+    ...agentFields,
+    oid: newObjectId(),
+    content: replyText,
+    caption: '',
+    message_type: 1,
+    attachment_url: null,
+    attachment_type: '',
+    attachment_name: '',
+    attachment_size: 0,
+  });
+
+  return [imageMessage, textMessage];
 }
 
 /**
