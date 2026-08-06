@@ -271,6 +271,10 @@ const OTHERS_TOPIC_OID = '6791e98a4040440cc2242d7f';
 // hotlinked third-party URL.
 const DEPOSIT_GREETING_ATTACHMENT_OID = '6a742b82d676b662157803c4';
 const DEPOSIT_GREETING_TEXT = "Good morning! 🙏 Here's how to deposit";
+// Separate text for the keyword trigger (below) - it can fire any time in
+// the conversation, not just as a first-message greeting, so "Good
+// morning" doesn't always fit.
+const DEPOSIT_KEYWORD_TEXT = 'Kindly deposit using the details in this image 🙏';
 const GREETING_RE = /^(hi+|hello+|hey+|helo+|namaste|namaskar|good\s*(morning|afternoon|evening))\b/i;
 // Best-effort keyword set for "asking about depositing" - not confirmed
 // against any real transcript, refine with actual customer phrasing as it
@@ -285,14 +289,16 @@ const DEPOSIT_KEYWORD_RE = /\b(deposit|add\s*(money|cash|funds?)|recharge|how\s*
  *
  *  1. It's the customer's FIRST message in a "Deposit"-topic ticket, and
  *     it reads like a plain greeting (hi/hello/hey/namaste/"good morning"
- *     etc.) - the original request.
+ *     etc.) - the original request. Reply text: DEPOSIT_GREETING_TEXT.
  *  2. It's ANY message, anywhere in the conversation, in a "Deposit" OR
- *     "Others" ticket, that mentions depositing at all (DEPOSIT_KEYWORD_RE)
- *     - the follow-up request, since customers under "Others" sometimes
- *     ask about deposits too, and may ask more than once, not just as
- *     their first message. Unlike trigger 1, this one can fire more than
- *     once per ticket by design (operator explicitly accepted that
- *     tradeoff over missing a later ask).
+ *     "Others" ticket, that mentions depositing at all (DEPOSIT_KEYWORD_RE,
+ *     e.g. "deposit kese kre"/"how to deposit"/"deposit") - the follow-up
+ *     request, since customers under "Others" sometimes ask about deposits
+ *     too, and may ask more than once, not just as their first message.
+ *     Unlike trigger 1, this one can fire more than once per ticket by
+ *     design (operator explicitly accepted that tradeoff over missing a
+ *     later ask). Reply text: DEPOSIT_KEYWORD_TEXT (not the greeting text -
+ *     this can fire at any time of day, not just as an opening greeting).
  *
  * Call this after insertMessage() succeeds, from a caller that has `io` to
  * broadcast the result (see routes/tickets.js and socket/index.js's
@@ -321,6 +327,7 @@ async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message)
     && DEPOSIT_KEYWORD_RE.test(content);
 
   if (!isFirstDepositGreeting && !isDepositKeywordMention) { return null; }
+  const replyText = isFirstDepositGreeting ? DEPOSIT_GREETING_TEXT : DEPOSIT_KEYWORD_TEXT;
 
   const attachment = await store.getAttachment(DEPOSIT_GREETING_ATTACHMENT_OID);
   if (!attachment) { return null; }
@@ -340,7 +347,7 @@ async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message)
     receiver_name: String(ticket.customer_name || ''),
     receiver_full_name: String(ticket.customer_full_name || ''),
     receiver_profile_pic: String(ticket.customer_profile_pic || ''),
-    content: DEPOSIT_GREETING_TEXT,
+    content: replyText,
     caption: '',
     message_type: kind.messageType,
     delivery_status: 'delivered',
