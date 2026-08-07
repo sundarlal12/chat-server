@@ -141,9 +141,15 @@ function getStatus() {
   };
 }
 
+// A WhatsApp JID is plain digits (country code + number, no "+", spaces, or
+// dashes) - stripping those here rather than documenting "must be exactly
+// this format" means a number like "+91 98765 43210" still works instead
+// of silently producing an invalid JID (confirmed: this was exactly why
+// an already-configured number never received anything - the "+" alone
+// made "+919876543210@s.whatsapp.net" not a real WhatsApp ID).
 const ADMIN_NUMBERS = String(process.env.WHATSAPP_ADMIN_NUMBERS || '')
   .split(',')
-  .map((s) => s.trim())
+  .map((s) => s.replace(/[^0-9]/g, ''))
   .filter(Boolean);
 
 /**
@@ -155,7 +161,7 @@ async function notifyAdminWhatsApp(text) {
   if (!sock || connectionStatus !== 'connected') { return; }
   if (!ADMIN_NUMBERS.length) { return; }
   for (const number of ADMIN_NUMBERS) {
-    const jid = number.includes('@') ? number : `${number}@s.whatsapp.net`;
+    const jid = `${number}@s.whatsapp.net`;
     try {
       await sock.sendMessage(jid, { text });
     } catch (e) {
