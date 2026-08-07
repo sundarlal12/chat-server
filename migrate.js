@@ -86,6 +86,18 @@ async function migrate() {
   // customer's current device, since only the customer's own requests
   // ever carry their fcmToken.
   await ensureColumn('chat_tickets', 'customer_fcm_token', "VARCHAR(255) NOT NULL DEFAULT ''");
+  // Same cache pattern as customer_name/etc - shown in the admin panel
+  // ticket list/header (operator request) and used in WhatsApp alert text.
+  await ensureColumn('chat_tickets', 'customer_phone', "VARCHAR(32) NOT NULL DEFAULT ''");
+  // Set once, the first time a REAL admin (not the welcome/deposit
+  // auto-replies, which also send as the agent identity but aren't a
+  // human responding) sends a message on this ticket - see
+  // insertAdminMessage in chatLogic.js. Gates the "forward every customer
+  // message to WhatsApp" behavior (see routes/tickets.js and
+  // socket/index.js's send-message handlers) - operator wants ongoing
+  // unattended messages relayed, but only until an admin actually starts
+  // handling the conversation.
+  await ensureColumn('chat_tickets', 'admin_first_replied_at', 'DATETIME NULL');
 
   await createTableIfMissing('chat_messages', `
     CREATE TABLE chat_messages (

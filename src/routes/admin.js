@@ -34,6 +34,7 @@ function adminTicketDoc(row) {
     customerName: row.customer_name || '',
     customerFullName: row.customer_full_name || '',
     customerProfilePic: row.customer_profile_pic || '',
+    customerPhone: row.customer_phone || '',
   };
 }
 

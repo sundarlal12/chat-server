@@ -168,6 +168,7 @@ async function createOrGetTicket(user, { topicId }) {
     customer_full_name: customerFullName,
     customer_profile_pic: String(user.profilePic || ''),
     customer_fcm_token: String(user.fcmToken || ''),
+    customer_phone: String(user.phoneNumber || ''),
   });
 
   // Sender is the ticket's own agent identity, receiver the customer -
@@ -262,6 +263,7 @@ async function insertMessage(user, ticket, body) {
   // notification can reach the customer's current device.
   const ticketUpdate = { last_activity: message.created_at, last_customer_message: message.created_at };
   if (user.fcmToken) { ticketUpdate.customer_fcm_token = String(user.fcmToken); }
+  if (user.phoneNumber) { ticketUpdate.customer_phone = String(user.phoneNumber); }
   await store.updateTicket(String(ticket.oid), ticketUpdate);
 
   return message;
@@ -435,7 +437,15 @@ async function insertAdminMessage(admin, ticket, body) {
     video_image: null,
   });
 
-  await store.updateTicket(String(ticket.oid), { last_activity: message.created_at });
+  // First real admin reply on this ticket (not the welcome/deposit
+  // auto-replies, which insert directly via store.insertMessageRow rather
+  // than going through this function) - gates the "forward unattended
+  // customer messages to WhatsApp" behavior in insertMessage's callers
+  // (see routes/tickets.js and socket/index.js), which should stop once
+  // an admin has actually started handling the conversation.
+  const ticketUpdate = { last_activity: message.created_at };
+  if (!ticket.admin_first_replied_at) { ticketUpdate.admin_first_replied_at = message.created_at; }
+  await store.updateTicket(String(ticket.oid), ticketUpdate);
   return message;
 }
 

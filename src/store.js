@@ -52,11 +52,11 @@ async function insertTicket(t) {
     `INSERT INTO chat_tickets
        (oid,user_oid,topic_oid,subject,description,status,priority,is_ai_handled,
         recipient_oid,agent_name,agent_full_name,agent_profile_pic,
-        customer_name,customer_full_name,customer_profile_pic,customer_fcm_token,
+        customer_name,customer_full_name,customer_profile_pic,customer_fcm_token,customer_phone,
         last_activity,created_at,updated_at)
      VALUES (:oid,:user_oid,:topic_oid,:subject,:description,:status,:priority,:is_ai_handled,
              :recipient_oid,:agent_name,:agent_full_name,:agent_profile_pic,
-             :customer_name,:customer_full_name,:customer_profile_pic,:customer_fcm_token,
+             :customer_name,:customer_full_name,:customer_profile_pic,:customer_fcm_token,:customer_phone,
              :now,:now,:now)`,
     { ...t, now }
   );

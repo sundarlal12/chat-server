@@ -182,4 +182,24 @@ function formatWaitingMessage({ customerName, phone, subject, ticketId }) {
   return lines.join('\n');
 }
 
-module.exports = { start, getStatus, notifyAdminWhatsApp, formatWaitingMessage };
+/**
+ * Relays an unattended customer message - called for every customer
+ * message on a ticket no admin has replied to yet (see
+ * chatLogic.js's insertAdminMessage for how "replied yet" is tracked, and
+ * routes/tickets.js/socket/index.js's send-message handlers for the
+ * gating check). Unlike formatWaitingMessage this can fire repeatedly per
+ * ticket, by design - operator wants ongoing unattended messages relayed,
+ * not just the first one, until an admin actually starts handling it.
+ */
+function formatCustomerMessageAlert({ customerName, phone, content, hasAttachment, ticketId }) {
+  const lines = [
+    '💬 New message (no admin has replied yet)',
+    `From: ${customerName || 'Unknown'}`,
+  ];
+  if (phone) { lines.push(`Mobile: ${phone}`); }
+  lines.push(hasAttachment ? '"Sent an attachment"' : `"${content || '(empty message)'}"`);
+  if (ticketId) { lines.push(`Ticket: ${ticketId}`); }
+  return lines.join('\n');
+}
+
+module.exports = { start, getStatus, notifyAdminWhatsApp, formatWaitingMessage, formatCustomerMessageAlert };

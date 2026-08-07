@@ -70,6 +70,19 @@ function createTicketsRouter(io) {
         }
         io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: doc.createdAt });
       }
+
+      // `ticket` is still the pre-message snapshot - no admin had replied
+      // as of right before this message if admin_first_replied_at was
+      // empty then. Not awaited - see whatsapp.js's own resilience notes.
+      if (!ticket.admin_first_replied_at) {
+        whatsapp.notifyAdminWhatsApp(whatsapp.formatCustomerMessageAlert({
+          customerName: ticket.customer_full_name || ticket.customer_name,
+          phone: req.chatUser.phoneNumber,
+          content: message.content,
+          hasAttachment: !!message.attachment_url,
+          ticketId: ticket.oid,
+        }));
+      }
     } catch (e) { handleError(res, e); }
   });
 
