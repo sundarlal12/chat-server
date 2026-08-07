@@ -13,7 +13,7 @@ const ADMIN_JWT_SECRET = process.env.ADMIN_JWT_SECRET || crypto.randomBytes(32).
 if (!process.env.ADMIN_JWT_SECRET) {
   console.warn('ADMIN_JWT_SECRET not set - using a random secret for this process only, admin sessions will not survive a restart. Set ADMIN_JWT_SECRET in production.');
 }
-const ADMIN_TOKEN_TTL_SECONDS = 12 * 60 * 60; // 12h
+const ADMIN_TOKEN_TTL_SECONDS = 24 * 60 * 60; // 24h
 
 function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('hex');
