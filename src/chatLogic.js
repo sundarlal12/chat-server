@@ -269,6 +269,7 @@ async function insertMessage(user, ticket, body) {
 
 // Topic oids - see migrate.js's seed data (confirmed via papa776.har).
 const DEPOSIT_TOPIC_OID = '6791e9794040440cc2242d75';
+const WITHDRAW_TOPIC_OID = '6790e068484db7edd6e49775';
 const OTHERS_TOPIC_OID = '6791e98a4040440cc2242d7f';
 // Pre-uploaded via upload-chat-attachment - already sitting in this
 // service's own chat_attachments table (operator-provided oid), not a
@@ -294,15 +295,17 @@ const DEPOSIT_KEYWORD_RE = /\b(deposit|add\s*(money|cash|funds?)|recharge|how\s*
  *  1. It's the customer's FIRST message in a "Deposit"-topic ticket, and
  *     it reads like a plain greeting (hi/hello/hey/namaste/"good morning"
  *     etc.) - the original request. Reply text: DEPOSIT_GREETING_TEXT.
- *  2. It's ANY message, anywhere in the conversation, in a "Deposit" OR
- *     "Others" ticket, that mentions depositing at all (DEPOSIT_KEYWORD_RE,
- *     e.g. "deposit kese kre"/"how to deposit"/"deposit") - the follow-up
- *     request, since customers under "Others" sometimes ask about deposits
- *     too, and may ask more than once, not just as their first message.
- *     Unlike trigger 1, this one can fire more than once per ticket by
- *     design (operator explicitly accepted that tradeoff over missing a
- *     later ask). Reply text: DEPOSIT_KEYWORD_TEXT (not the greeting text -
- *     this can fire at any time of day, not just as an opening greeting).
+ *  2. It's ANY message, anywhere in the conversation, in a "Deposit",
+ *     "Withdraw", OR "Others" ticket, that mentions depositing at all
+ *     (DEPOSIT_KEYWORD_RE, e.g. "deposit kese kre"/"how to deposit"/
+ *     "deposit") - the follow-up request, since customers sometimes ask
+ *     about depositing regardless of which topic they actually opened the
+ *     ticket under (e.g. asking "deposit fund" while in the Withdraw tab),
+ *     and may ask more than once, not just as their first message. Unlike
+ *     trigger 1, this one can fire more than once per ticket by design
+ *     (operator explicitly accepted that tradeoff over missing a later
+ *     ask). Reply text: DEPOSIT_KEYWORD_TEXT (not the greeting text - this
+ *     can fire at any time of day, not just as an opening greeting).
  *
  * Call this after insertMessage() succeeds, from a caller that has `io` to
  * broadcast the result(s) (see routes/tickets.js and socket/index.js's
@@ -337,7 +340,7 @@ async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message)
   const isFirstDepositGreeting = !ticketBeforeThisMessage.last_customer_message
     && topicOid === DEPOSIT_TOPIC_OID
     && GREETING_RE.test(content);
-  const isDepositKeywordMention = (topicOid === DEPOSIT_TOPIC_OID || topicOid === OTHERS_TOPIC_OID)
+  const isDepositKeywordMention = (topicOid === DEPOSIT_TOPIC_OID || topicOid === WITHDRAW_TOPIC_OID || topicOid === OTHERS_TOPIC_OID)
     && DEPOSIT_KEYWORD_RE.test(content);
 
   if (!isFirstDepositGreeting && !isDepositKeywordMention) { return []; }
