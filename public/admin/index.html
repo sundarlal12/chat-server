@@ -6,111 +6,181 @@
 <title>PAPA777 Chat Admin</title>
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <style>
-  :root { color-scheme: dark; }
+  /* Light (default) matches the main PAPA777 admin dashboard's red/white
+     theme; dark is a toggleable alternate - see the theme-toggle button
+     in the header. Everything below reads colors from these variables
+     rather than hardcoding them, so the toggle just flips one attribute. */
+  :root {
+    --bg: #f4f5f7;
+    --surface: #ffffff;
+    --surface-alt: #fafafb;
+    --border: #e6e8ec;
+    --text: #1f2430;
+    --text-muted: #6b7280;
+    --text-faint: #9aa1ae;
+    --brand: #e0263b;
+    --brand-hover: #c81f32;
+    --brand-soft: #fdeaec;
+    --success-bg: #e5f7ec;
+    --success-text: #17924a;
+    --danger-bg: #fdeaec;
+    --danger-text: #e0263b;
+    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+    --out-bubble-text: #ffffff;
+    color-scheme: light;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1115;
+    --surface: #171a21;
+    --surface-alt: #1c2028;
+    --border: #262b36;
+    --text: #e6e8eb;
+    --text-muted: #8a93a3;
+    --text-faint: #5a6273;
+    --brand: #e0263b;
+    --brand-hover: #ff4d5e;
+    --brand-soft: #3a1c22;
+    --success-bg: #1f4d2f;
+    --success-text: #6fd88f;
+    --danger-bg: #3a2323;
+    --danger-text: #ff9d9d;
+    --shadow: none;
+    --out-bubble-text: #ffffff;
+    color-scheme: dark;
+  }
   * { box-sizing: border-box; }
   body {
     margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: #0f1115; color: #e6e8eb; height: 100vh; overflow: hidden;
+    background: var(--bg); color: var(--text); height: 100vh; overflow: hidden;
   }
   .hidden { display: none !important; }
 
   /* ---------- Login ---------- */
   #login-screen {
-    height: 100vh; display: flex; align-items: center; justify-content: center;
+    height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--bg);
   }
   #login-box {
-    width: 320px; background: #171a21; border: 1px solid #262b36; border-radius: 10px; padding: 28px;
+    width: 320px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 28px; box-shadow: var(--shadow);
   }
-  #login-box h1 { font-size: 18px; margin: 0 0 4px; }
-  #login-box p.sub { color: #8a93a3; font-size: 13px; margin: 0 0 20px; }
+  #login-logo {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 18px;
+  }
+  #login-logo .badge {
+    width: 34px; height: 34px; border-radius: 9px; background: var(--brand); color: #fff;
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 16px; flex-shrink: 0;
+  }
+  #login-logo .name { font-size: 17px; font-weight: 700; letter-spacing: 0.2px; }
+  #login-box p.sub { color: var(--text-muted); font-size: 13px; margin: 0 0 20px; }
   #login-box input {
-    width: 100%; padding: 10px 12px; margin-bottom: 12px; border-radius: 6px;
-    border: 1px solid #2b303c; background: #0f1115; color: #e6e8eb; font-size: 14px;
+    width: 100%; padding: 10px 12px; margin-bottom: 12px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--surface-alt); color: var(--text); font-size: 14px;
   }
+  #login-box input:focus { outline: none; border-color: var(--brand); }
   #login-box button {
-    width: 100%; padding: 10px 12px; border-radius: 6px; border: none;
-    background: #4f7cff; color: white; font-size: 14px; font-weight: 600; cursor: pointer;
+    width: 100%; padding: 10px 12px; border-radius: 8px; border: none;
+    background: var(--brand); color: white; font-size: 14px; font-weight: 600; cursor: pointer;
   }
-  #login-box button:hover { background: #3d6ae8; }
-  #login-error { color: #ff6b6b; font-size: 13px; margin: 0 0 12px; min-height: 16px; }
+  #login-box button:hover { background: var(--brand-hover); }
+  #login-error { color: var(--danger-text); font-size: 13px; margin: 0 0 12px; min-height: 16px; }
 
   /* ---------- App shell ---------- */
   #app-screen { display: flex; flex-direction: column; height: 100vh; }
   header {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 16px; border-bottom: 1px solid #262b36; background: #171a21; flex-shrink: 0;
+    padding: 10px 18px; border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0;
+    box-shadow: var(--shadow);
   }
-  header h1 { font-size: 15px; margin: 0; }
-  header .who { color: #8a93a3; font-size: 12px; }
-  header button {
-    background: none; border: 1px solid #2b303c; color: #ccc; padding: 6px 12px;
-    border-radius: 6px; font-size: 12px; cursor: pointer;
+  header .brand { display: flex; align-items: center; gap: 10px; }
+  header .brand .badge {
+    width: 32px; height: 32px; border-radius: 9px; background: var(--brand); color: #fff;
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px;
   }
-  header button:hover { background: #22262f; }
+  header .brand .name { font-size: 15px; font-weight: 700; letter-spacing: 0.2px; }
+  header .brand .name small { display: block; font-weight: 500; font-size: 11px; color: var(--text-muted); }
+  header .header-actions { display: flex; align-items: center; gap: 10px; }
+  header .who { color: var(--text-muted); font-size: 12px; margin-right: 2px; }
+  .icon-btn {
+    width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface-alt);
+    color: var(--text-muted); display: flex; align-items: center; justify-content: center; font-size: 15px;
+    cursor: pointer; padding: 0; flex-shrink: 0;
+  }
+  .icon-btn:hover { background: var(--brand-soft); color: var(--brand); border-color: var(--brand-soft); }
+  #avatar-badge {
+    width: 30px; height: 30px; border-radius: 50%; background: var(--brand); color: #fff; font-size: 13px;
+    font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  header button#logout-btn {
+    background: none; border: 1px solid var(--border); color: var(--text-muted); padding: 7px 12px;
+    border-radius: 7px; font-size: 12px; cursor: pointer; font-weight: 600;
+  }
+  header button#logout-btn:hover { background: var(--danger-bg); color: var(--danger-text); border-color: var(--danger-bg); }
 
   #main { flex: 1; display: flex; min-height: 0; }
 
   /* ---------- Ticket list ---------- */
-  #ticket-panel { width: 320px; border-right: 1px solid #262b36; display: flex; flex-direction: column; flex-shrink: 0; }
-  #status-tabs { display: flex; gap: 4px; padding: 10px; border-bottom: 1px solid #262b36; }
+  #ticket-panel { width: 320px; border-right: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; flex-shrink: 0; }
+  #status-tabs { display: flex; gap: 6px; padding: 12px; border-bottom: 1px solid var(--border); }
   #status-tabs button {
-    flex: 1; background: #171a21; border: 1px solid #262b36; color: #8a93a3; padding: 6px 0;
-    border-radius: 6px; font-size: 12px; cursor: pointer;
+    flex: 1; background: var(--surface-alt); border: 1px solid var(--border); color: var(--text-muted); padding: 7px 0;
+    border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer;
   }
-  #status-tabs button.active { background: #4f7cff; border-color: #4f7cff; color: white; }
+  #status-tabs button.active { background: var(--brand); border-color: var(--brand); color: white; }
   #ticket-list { flex: 1; overflow-y: auto; }
   .ticket-row {
-    padding: 12px 14px; border-bottom: 1px solid #1c2028; cursor: pointer; position: relative;
+    padding: 12px 16px; border-bottom: 1px solid var(--border); cursor: pointer; position: relative;
   }
-  .ticket-row:hover { background: #171a21; }
-  .ticket-row.selected { background: #1c2540; }
-  .ticket-row .name { font-size: 13px; font-weight: 600; margin-bottom: 3px; }
-  .ticket-row .subject { font-size: 12px; color: #8a93a3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .ticket-row .meta { font-size: 11px; color: #5a6273; margin-top: 4px; display: flex; justify-content: space-between; }
+  .ticket-row:hover { background: var(--surface-alt); }
+  .ticket-row.selected { background: var(--brand-soft); }
+  .ticket-row .name { font-size: 13px; font-weight: 600; margin-bottom: 3px; color: var(--text); }
+  .ticket-row .subject { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ticket-row .meta { font-size: 11px; color: var(--text-faint); margin-top: 5px; display: flex; justify-content: space-between; }
   .badge {
-    display: inline-block; font-size: 10px; padding: 2px 6px; border-radius: 10px; text-transform: uppercase;
+    display: inline-block; font-size: 10px; padding: 2px 7px; border-radius: 10px; text-transform: uppercase; font-weight: 700;
   }
-  .badge.open { background: #1f4d2f; color: #6fd88f; }
-  .badge.closed { background: #3a2323; color: #ff9d9d; }
-  #ticket-empty { padding: 20px 14px; color: #5a6273; font-size: 13px; }
+  .badge.open { background: var(--success-bg); color: var(--success-text); }
+  .badge.closed { background: var(--danger-bg); color: var(--danger-text); }
+  #ticket-empty { padding: 20px 16px; color: var(--text-faint); font-size: 13px; }
 
   /* ---------- Chat panel ---------- */
-  #chat-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  #chat-placeholder { flex: 1; display: flex; align-items: center; justify-content: center; color: #5a6273; font-size: 13px; }
-  #chat-header { padding: 12px 16px; border-bottom: 1px solid #262b36; }
-  #chat-header .name { font-size: 14px; font-weight: 600; }
-  #chat-header .subject { font-size: 12px; color: #8a93a3; margin-top: 2px; }
-  #messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
-  .msg { max-width: 60%; padding: 8px 12px; border-radius: 10px; font-size: 13px; line-height: 1.4; word-wrap: break-word; }
-  .msg.in { align-self: flex-start; background: #1c2028; border-bottom-left-radius: 2px; }
-  .msg.out { align-self: flex-end; background: #4f7cff; color: white; border-bottom-right-radius: 2px; }
-  .msg .time { display: block; font-size: 10px; opacity: 0.65; margin-top: 4px; }
-  .msg img.att, .msg video.att { max-width: 220px; border-radius: 6px; display: block; margin-top: 6px; }
+  #chat-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
+  #chat-placeholder { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-faint); font-size: 13px; }
+  #chat-header { padding: 14px 18px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  #chat-header .name { font-size: 14px; font-weight: 700; color: var(--text); }
+  #chat-header .subject { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  #messages { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { max-width: 60%; padding: 9px 13px; border-radius: 12px; font-size: 13px; line-height: 1.4; word-wrap: break-word; box-shadow: var(--shadow); }
+  .msg.in { align-self: flex-start; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-bottom-left-radius: 3px; }
+  .msg.out { align-self: flex-end; background: var(--brand); color: var(--out-bubble-text); border-bottom-right-radius: 3px; }
+  .msg .time { display: block; font-size: 10px; opacity: 0.7; margin-top: 4px; }
+  .msg img.att, .msg video.att { max-width: 220px; border-radius: 8px; display: block; margin-top: 6px; }
   .msg audio { display: block; margin-top: 6px; max-width: 220px; }
   .msg a.att-link { display: inline-block; margin-top: 6px; font-size: 12px; color: inherit; text-decoration: underline; }
 
-  #composer { border-top: 1px solid #262b36; padding: 10px 14px; display: flex; gap: 8px; align-items: flex-end; }
+  #composer { border-top: 1px solid var(--border); background: var(--surface); padding: 10px 16px; display: flex; gap: 8px; align-items: flex-end; }
   #composer textarea {
-    flex: 1; resize: none; min-height: 38px; max-height: 120px; padding: 9px 12px; border-radius: 8px;
-    border: 1px solid #2b303c; background: #0f1115; color: #e6e8eb; font-size: 13px; font-family: inherit;
+    flex: 1; resize: none; min-height: 38px; max-height: 120px; padding: 9px 12px; border-radius: 9px;
+    border: 1px solid var(--border); background: var(--surface-alt); color: var(--text); font-size: 13px; font-family: inherit;
   }
+  #composer textarea:focus { outline: none; border-color: var(--brand); }
   #composer button, #composer label.icon-btn {
-    background: #22262f; border: 1px solid #2b303c; color: #ccc; padding: 9px 12px; border-radius: 8px;
-    font-size: 13px; cursor: pointer; flex-shrink: 0;
+    background: var(--surface-alt); border: 1px solid var(--border); color: var(--text-muted); padding: 9px 12px; border-radius: 9px;
+    font-size: 13px; cursor: pointer; flex-shrink: 0; width: auto; height: auto;
   }
-  #composer button.primary { background: #4f7cff; border-color: #4f7cff; color: white; font-weight: 600; }
-  #composer button:hover { filter: brightness(1.1); }
+  #composer button.primary { background: var(--brand); border-color: var(--brand); color: white; font-weight: 700; }
+  #composer button.primary:hover { background: var(--brand-hover); }
+  #composer button:hover { filter: brightness(1.03); }
   #composer button:disabled { opacity: 0.5; cursor: default; }
-  #voice-btn.recording { background: #7a1f1f; border-color: #ff4d4d; color: #ff9d9d; animation: pulse 1.2s infinite; }
+  #voice-btn.recording { background: var(--danger-bg); border-color: var(--brand); color: var(--brand); animation: pulse 1.2s infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
-  #pending-file { font-size: 11px; color: #8a93a3; padding: 0 14px 8px; }
+  #pending-file { font-size: 11px; color: var(--text-muted); padding: 0 16px 8px; background: var(--surface); }
 </style>
 </head>
 <body>
 
 <div id="login-screen">
   <div id="login-box">
-    <h1>PAPA777 Chat Admin</h1>
+    <div id="login-logo"><span class="badge">P</span><span class="name">PAPA777</span></div>
     <p class="sub">Sign in with your chat-admin account.</p>
     <p id="login-error"></p>
     <input id="login-username" type="text" placeholder="Username" autocomplete="username" />
@@ -121,9 +191,15 @@
 
 <div id="app-screen" class="hidden">
   <header>
-    <h1>PAPA777 Chat Admin</h1>
-    <div style="display:flex; align-items:center; gap:12px;">
+    <div class="brand">
+      <span class="badge">P</span>
+      <span class="name">PAPA777<small>Chat Admin</small></span>
+    </div>
+    <div class="header-actions">
       <span class="who" id="who-label"></span>
+      <button class="icon-btn" id="notif-btn" title="Notifications" aria-label="Notifications">🔔</button>
+      <button class="icon-btn" id="theme-toggle-btn" title="Toggle theme" aria-label="Toggle theme">🌙</button>
+      <div id="avatar-badge"></div>
       <button id="logout-btn">Log out</button>
     </div>
   </header>
@@ -160,6 +236,24 @@
   const $ = (sel) => document.querySelector(sel);
   const loginScreen = $('#login-screen');
   const appScreen = $('#app-screen');
+
+  // ---------- Theme ----------
+  // Light (red/white, matching the main PAPA777 admin dashboard) is the
+  // default; persisted choice overrides it. Toggle icon shows the mode a
+  // click would switch TO (moon while light, sun while dark).
+  function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    const btn = $('#theme-toggle-btn');
+    if (btn) { btn.textContent = theme === 'dark' ? '☀️' : '🌙'; }
+  }
+  applyTheme(localStorage.getItem('chatAdminTheme') || 'light');
+  document.addEventListener('DOMContentLoaded', () => {
+    $('#theme-toggle-btn').addEventListener('click', () => {
+      const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      localStorage.setItem('chatAdminTheme', next);
+      applyTheme(next);
+    });
+  });
 
   function escapeHtml(s) {
     return String(s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -213,7 +307,9 @@
   async function enterApp() {
     loginScreen.classList.add('hidden');
     appScreen.classList.remove('hidden');
-    $('#who-label').textContent = adminInfo ? adminInfo.displayName : '';
+    const label = adminInfo ? adminInfo.displayName : '';
+    $('#who-label').textContent = label;
+    $('#avatar-badge').textContent = (label || '?').trim().charAt(0).toUpperCase();
     connectSocket();
     await loadTickets();
   }
