@@ -11,6 +11,7 @@ const chatDataRoute = require('./src/routes/chatData');
 const { createTicketsRouter } = require('./src/routes/tickets');
 const { createAttachmentsRouter, createTicketFileUploadRouter } = require('./src/routes/attachments');
 const { createAdminRouter } = require('./src/routes/admin');
+const whatsappPage = require('./src/routes/whatsappPage');
 const { attachChatSocket } = require('./src/socket');
 const whatsapp = require('./src/whatsapp');
 const { migrate } = require('./migrate');
@@ -115,6 +116,8 @@ app.use('/v1/admin', createTicketFileUploadRouter(io));
 // createAdminRouter(io) needs `io` to broadcast a sent reply into the
 // ticket's socket.io room so it reaches an already-connected customer live.
 app.use('/admin/api', createAdminRouter(io));
+// Route handler, not a static file - see src/routes/whatsappPage.js for why.
+app.get('/admin/whatsapp', whatsappPage);
 app.use('/admin', express.static(path.join(__dirname, 'public/admin')));
 
 app.use((req, res) => res.status(404).json({ code: 404, message: 'Not found' }));

@@ -1,13 +1,23 @@
-<!DOCTYPE html>
-<!-- served from public/admin/ alongside index.html -->
+/**
+ * The WhatsApp QR-connection page, served as a route handler rather than
+ * a static file under public/admin/. That's not the normal pattern here
+ * (index.html is a plain static file) - moved to this shape specifically
+ * because a genuinely new file added to public/admin/ stopped being found
+ * by express.static on this deployment (confirmed with two different new
+ * filenames, both 404ing while the pre-existing index.html kept serving
+ * fine) - a Railway build-cache/static-asset quirk that couldn't be
+ * resolved from this side. New route handlers deploy reliably (every
+ * other change this session has), so the page content lives here instead
+ * until/unless that underlying issue gets sorted out directly with Railway.
+ */
+const HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>WhatsApp Connection - PAPA777 Chat Admin</title>
 <style>
-  /* Same variable set as index.html - kept in sync manually since this is
-     a small, separate utility page (see index.html for the full theme). */
+  /* Same variable set as public/admin/index.html - kept in sync manually since this is a small, separate utility page. */
   :root {
     --bg: #f4f5f7; --surface: #ffffff; --surface-alt: #fafafb; --border: #e6e8ec;
     --text: #1f2430; --text-muted: #6b7280; --text-faint: #9aa1ae;
@@ -121,10 +131,10 @@
 
   function render(data) {
     const status = data.status || 'disconnected';
-    const pill = `<span class="status-pill ${status}">${status}</span>`;
+    const pill = '<span class="status-pill ' + status + '">' + status + '</span>';
 
     if (status === 'qr' && data.qrDataUrl) {
-      qrBox.innerHTML = `<img src="${data.qrDataUrl}" alt="WhatsApp QR code" />`;
+      qrBox.innerHTML = '<img src="' + data.qrDataUrl + '" alt="WhatsApp QR code" />';
       hint.textContent = 'Open WhatsApp on the admin phone → Linked Devices → Link a Device, then scan this code.';
       reconnectBtn.classList.add('hidden');
     } else if (status === 'connected') {
@@ -158,3 +168,6 @@
 </script>
 </body>
 </html>
+`;
+
+module.exports = (req, res) => { res.type('html').send(HTML); };
