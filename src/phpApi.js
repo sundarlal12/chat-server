@@ -45,6 +45,11 @@ async function getUserInfo(token) {
     // to reach the customer's own current fcmToken - only the customer's
     // own authenticated requests ever see it.
     fcmToken: String(result.fcmToken || ''),
+    // For the WhatsApp "customer is waiting" admin alert (see
+    // src/whatsapp.js) - build_user_info() in the PHP repo maps this
+    // straight off the users.mobile column.
+    phoneNumber: String(result.phoneNumber || ''),
+    countryCode: String(result.countryCode || ''),
   };
   cache.set(token, { user, expiresAt: Date.now() + CACHE_TTL_MS });
   return user;

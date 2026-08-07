@@ -10,6 +10,7 @@ const store = require('../store');
 const { newObjectId } = require('../helpers');
 const { classify, ALLOWED_DESCRIPTION } = require('../attachmentPolicy');
 const { sendChatPushNotification, chatPushBody } = require('../push');
+const whatsapp = require('../whatsapp');
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -151,6 +152,17 @@ function createAdminRouter(io) {
         attachmentSize: req.file.size || 0,
       },
     });
+  }));
+
+  /** GET /admin/api/whatsapp/status - poll for the WhatsApp connection state + QR (see public/admin/whatsapp.html). */
+  router.get('/whatsapp/status', (req, res) => {
+    res.json({ status: 1, data: whatsapp.getStatus() });
+  });
+
+  /** POST /admin/api/whatsapp/reconnect - manually (re)start the connection, e.g. after an intentional logout from the phone. */
+  router.post('/whatsapp/reconnect', asyncRoute(async (req, res) => {
+    whatsapp.start();
+    res.json({ status: 1, message: 'Reconnect started' });
   }));
 
   return router;

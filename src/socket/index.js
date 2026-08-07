@@ -7,6 +7,7 @@ const {
 } = require('../chatLogic');
 const { rawTicketDoc, createdTicketDoc, socketMessageDoc, chatMessageEventName } = require('../socketDocs');
 const { sendChatPushNotification, chatPushBody } = require('../push');
+const whatsapp = require('../whatsapp');
 
 /** Every admin socket joins this room on connect, so an `io.to(ADMIN_ROOM).emit(...)` reaches every logged-in admin regardless of which ticket (if any) they currently have open - used for the ticket-list "something happened" live signal. */
 const ADMIN_ROOM = '__admins__';
@@ -115,6 +116,14 @@ function attachChatSocket(io) {
           ticket: ticketDocOut,
         });
         io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: ticketDocOut.lastActivity });
+
+        // Not awaited - see push.js's equivalent comment for why.
+        whatsapp.notifyAdminWhatsApp(whatsapp.formatWaitingMessage({
+          customerName: ticket.customer_full_name || ticket.customer_name,
+          phone: user.phoneNumber,
+          subject: ticket.subject,
+          ticketId: ticket.oid,
+        }));
       } catch (e) {
         socket.emit('create-ticket', { success: false, message: e.httpStatus ? e.message : 'Service temporarily unavailable' });
         if (!e.httpStatus) { console.error(e); }

@@ -12,6 +12,7 @@ const { createTicketsRouter } = require('./src/routes/tickets');
 const { createAttachmentsRouter, createTicketFileUploadRouter } = require('./src/routes/attachments');
 const { createAdminRouter } = require('./src/routes/admin');
 const { attachChatSocket } = require('./src/socket');
+const whatsapp = require('./src/whatsapp');
 const { migrate } = require('./migrate');
 
 // PHP_API_BASE_URL: auth and display-name lookups delegate to the PHP API
@@ -144,6 +145,10 @@ migrate()
     httpServer.listen(port, () => {
       console.log(`papa777 chat service listening on :${port}`);
     });
+    // Not awaited/blocking startup - connecting (or reconnecting a saved
+    // session) can take a few seconds, and a WhatsApp-side hiccup
+    // shouldn't hold up the whole service coming up.
+    whatsapp.start();
   })
   .catch((e) => {
     console.error('Migration failed, not starting:', e);

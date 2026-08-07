@@ -167,6 +167,29 @@ async function getAttachment(oid) {
   return dbOne('SELECT * FROM chat_attachments WHERE oid = :o LIMIT 1', { o: oid });
 }
 
+/** WhatsApp (Baileys) auth-state key-value store - see src/whatsapp.js. */
+async function getWhatsAppAuthFile(fileKey) {
+  const row = await dbOne('SELECT file_value FROM whatsapp_auth_files WHERE file_key = :k LIMIT 1', { k: fileKey });
+  return row ? row.file_value : null;
+}
+
+async function setWhatsAppAuthFile(fileKey, value) {
+  await dbExec(
+    `INSERT INTO whatsapp_auth_files (file_key, file_value, updated_at) VALUES (:k, :v, :now)
+     ON DUPLICATE KEY UPDATE file_value = :v, updated_at = :now`,
+    { k: fileKey, v: value, now: mysqlNow() }
+  );
+}
+
+async function deleteWhatsAppAuthFile(fileKey) {
+  await dbExec('DELETE FROM whatsapp_auth_files WHERE file_key = :k', { k: fileKey });
+}
+
+/** Wipes the whole stored session (e.g. after the linked device was remotely unlinked) so the next connect starts clean with a fresh QR instead of failing on dead credentials. */
+async function clearWhatsAppAuthFiles() {
+  await dbExec('DELETE FROM whatsapp_auth_files');
+}
+
 module.exports = {
   DEFAULT_AGENT_OID,
   pickAgentName,
@@ -187,4 +210,8 @@ module.exports = {
   markMessagesReadFor,
   insertAttachment,
   getAttachment,
+  getWhatsAppAuthFile,
+  setWhatsAppAuthFile,
+  deleteWhatsAppAuthFile,
+  clearWhatsAppAuthFiles,
 };

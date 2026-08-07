@@ -200,6 +200,21 @@ async function migrate() {
       UNIQUE KEY uq_chat_attachments_oid (oid)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
 
+  // Generic key-value store for the WhatsApp Web (Baileys) linked-device
+  // session (see src/whatsapp.js) - mirrors Baileys' own file-based
+  // useMultiFileAuthState() one-row-per-key shape (one row for "creds",
+  // one per signal-protocol key/session/etc.), just backed by MySQL
+  // instead of local files so the session survives every deploy instead
+  // of forcing a fresh QR scan each time (this service redeploys often).
+  await createTableIfMissing('whatsapp_auth_files', `
+    CREATE TABLE whatsapp_auth_files (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      file_key VARCHAR(255) NOT NULL,
+      file_value LONGTEXT NULL,
+      updated_at DATETIME NOT NULL,
+      UNIQUE KEY uq_whatsapp_auth_files_key (file_key)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
   // Real 3 topics confirmed via papa776.har, same oids/timestamps used by
   // the earlier in-memory version for continuity.
   const topics = [

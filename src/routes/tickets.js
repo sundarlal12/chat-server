@@ -5,6 +5,7 @@ const { ticketDoc, messageDoc } = require('../docs');
 const { socketMessageDoc, chatMessageEventName } = require('../socketDocs');
 const { ADMIN_ROOM } = require('../socket');
 const store = require('../store');
+const whatsapp = require('../whatsapp');
 
 function handleError(res, e) {
   if (e && e.httpStatus) { return res.status(e.httpStatus).json({ code: e.httpStatus, message: e.message }); }
@@ -21,6 +22,16 @@ function createTicketsRouter(io) {
     try {
       const ticket = await createOrGetTicket(req.chatUser, req.body || {});
       res.json({ status: 1, data: ticketDoc(ticket), message: 'Ticket created successfully' });
+
+      // Not awaited - see push.js's equivalent comment for why (self-
+      // contained error handling in whatsapp.js, shouldn't hold up the
+      // response either way).
+      whatsapp.notifyAdminWhatsApp(whatsapp.formatWaitingMessage({
+        customerName: ticket.customer_full_name || ticket.customer_name,
+        phone: req.chatUser.phoneNumber,
+        subject: ticket.subject,
+        ticketId: ticket.oid,
+      }));
     } catch (e) { handleError(res, e); }
   });
 
