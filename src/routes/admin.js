@@ -166,6 +166,12 @@ function createAdminRouter(io) {
     res.json({ status: 1, message: 'Reconnect started' });
   }));
 
+  /** POST /admin/api/whatsapp/disconnect - unlink the connected number and clear the saved session. */
+  router.post('/whatsapp/disconnect', asyncRoute(async (req, res) => {
+    await whatsapp.disconnect();
+    res.json({ status: 1, message: 'Disconnected' });
+  }));
+
   return router;
 }
 

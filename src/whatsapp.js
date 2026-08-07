@@ -134,10 +134,38 @@ async function start() {
   }
 }
 
+/**
+ * Admin-triggered intentional disconnect (see POST /admin/api/whatsapp/
+ * disconnect) - logs out the linked device (so it also disappears from
+ * the phone's own Linked Devices list, not just on our end) and clears
+ * the stored session so the next connect() starts clean with a fresh QR
+ * rather than trying to reuse now-dead credentials. sock.logout() itself
+ * already triggers the same "loggedOut" cleanup path inside
+ * connection.update's close handler, but this doesn't rely on that event
+ * having fired yet before returning a response to the admin.
+ */
+async function disconnect() {
+  if (sock) {
+    try { await sock.logout(); } catch (e) { console.error('WhatsApp: logout error (continuing anyway):', e.message); }
+    sock = null;
+  }
+  connectionStatus = 'disconnected';
+  latestQrDataUrl = null;
+  await store.clearWhatsAppAuthFiles();
+}
+
+/** The linked account's own phone number (digits only), or null if not currently connected. */
+function getConnectedNumber() {
+  const id = sock && sock.user && sock.user.id;
+  if (!id) { return null; }
+  return id.split('@')[0].split(':')[0];
+}
+
 function getStatus() {
   return {
     status: connectionStatus,
     qrDataUrl: connectionStatus === 'qr' ? latestQrDataUrl : null,
+    connectedNumber: connectionStatus === 'connected' ? getConnectedNumber() : null,
   };
 }
 
@@ -202,4 +230,4 @@ function formatCustomerMessageAlert({ customerName, phone, content, hasAttachmen
   return lines.join('\n');
 }
 
-module.exports = { start, getStatus, notifyAdminWhatsApp, formatWaitingMessage, formatCustomerMessageAlert };
+module.exports = { start, getStatus, disconnect, notifyAdminWhatsApp, formatWaitingMessage, formatCustomerMessageAlert };

@@ -72,11 +72,15 @@ const HTML = `<!DOCTYPE html>
   .status-pill.qr, .status-pill.connecting { background: var(--brand-soft); color: var(--brand); }
   .status-pill.disconnected { background: var(--danger-bg); color: var(--danger-text); }
   #hint { color: var(--text-muted); font-size: 12px; margin-top: 16px; line-height: 1.5; }
-  button#reconnect-btn {
-    margin-top: 18px; background: var(--brand); border: none; color: white; font-weight: 700;
+  #connected-number { color: var(--text); font-size: 13px; font-weight: 700; margin-top: 10px; }
+  button#reconnect-btn, button#disconnect-btn {
+    margin-top: 18px; margin-left: 6px; border: none; font-weight: 700;
     padding: 10px 18px; border-radius: 8px; font-size: 13px; cursor: pointer;
   }
+  button#reconnect-btn { background: var(--brand); color: white; margin-left: 0; }
   button#reconnect-btn:hover { background: var(--brand-hover); }
+  button#disconnect-btn.secondary { background: var(--surface-alt); color: var(--danger-text); border: 1px solid var(--border); }
+  button#disconnect-btn.secondary:hover { background: var(--danger-bg); }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -97,8 +101,10 @@ const HTML = `<!DOCTYPE html>
     <div id="qr-box">
       <span class="status-pill" id="status-pill">Loading…</span>
     </div>
+    <div id="connected-number"></div>
     <div id="hint"></div>
     <button id="reconnect-btn" class="hidden">Reconnect</button>
+    <button id="disconnect-btn" class="hidden secondary">Disconnect</button>
   </div>
 </div>
 
@@ -112,8 +118,10 @@ const HTML = `<!DOCTYPE html>
   applyTheme(localStorage.getItem('chatAdminTheme') || 'light');
 
   const qrBox = document.getElementById('qr-box');
+  const connectedNumberEl = document.getElementById('connected-number');
   const hint = document.getElementById('hint');
   const reconnectBtn = document.getElementById('reconnect-btn');
+  const disconnectBtn = document.getElementById('disconnect-btn');
   let pollTimer = null;
 
   async function poll() {
@@ -132,6 +140,8 @@ const HTML = `<!DOCTYPE html>
   function render(data) {
     const status = data.status || 'disconnected';
     const pill = '<span class="status-pill ' + status + '">' + status + '</span>';
+    connectedNumberEl.textContent = '';
+    disconnectBtn.classList.add('hidden');
 
     if (status === 'qr' && data.qrDataUrl) {
       qrBox.innerHTML = '<img src="' + data.qrDataUrl + '" alt="WhatsApp QR code" />';
@@ -139,8 +149,10 @@ const HTML = `<!DOCTYPE html>
       reconnectBtn.classList.add('hidden');
     } else if (status === 'connected') {
       qrBox.innerHTML = pill;
+      if (data.connectedNumber) { connectedNumberEl.textContent = '📱 +' + data.connectedNumber; }
       hint.textContent = 'Connected - "customer waiting" alerts will be sent to the configured admin number(s).';
       reconnectBtn.classList.add('hidden');
+      disconnectBtn.classList.remove('hidden');
     } else if (status === 'connecting') {
       qrBox.innerHTML = pill;
       hint.textContent = 'Connecting…';
@@ -158,6 +170,16 @@ const HTML = `<!DOCTYPE html>
       await fetch('/admin/api/whatsapp/reconnect', { method: 'POST', headers: { Authorization: 'Bearer ' + token } });
     } catch (e) { /* next poll will just show disconnected again */ }
     reconnectBtn.disabled = false;
+    poll();
+  });
+
+  disconnectBtn.addEventListener('click', async () => {
+    if (!window.confirm('Disconnect this WhatsApp number? You will need to scan a new QR code to reconnect.')) { return; }
+    disconnectBtn.disabled = true;
+    try {
+      await fetch('/admin/api/whatsapp/disconnect', { method: 'POST', headers: { Authorization: 'Bearer ' + token } });
+    } catch (e) { /* next poll will reflect whatever state actually resulted */ }
+    disconnectBtn.disabled = false;
     poll();
   });
 
