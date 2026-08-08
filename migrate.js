@@ -235,6 +235,19 @@ async function migrate() {
       UNIQUE KEY uq_whatsapp_auth_files_key (file_key)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
 
+  // Queue for admin alerts that couldn't be sent immediately (WhatsApp
+  // disconnected/reconnecting - happens on every deploy, and on ordinary
+  // connection drops too) - reported: alerts sometimes silently never
+  // arrived when the admin was idle. notifyAdminWhatsApp() (src/
+  // whatsapp.js) now queues here instead of just dropping when not
+  // connected or a send throws, and flushes on reconnect.
+  await createTableIfMissing('whatsapp_pending_notifications', `
+    CREATE TABLE whatsapp_pending_notifications (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      message_text TEXT NOT NULL,
+      created_at DATETIME NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
   // Real 3 topics confirmed via papa776.har, same oids/timestamps used by
   // the earlier in-memory version for continuity.
   const topics = [

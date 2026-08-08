@@ -190,6 +190,26 @@ async function clearWhatsAppAuthFiles() {
   await dbExec('DELETE FROM whatsapp_auth_files');
 }
 
+const WHATSAPP_PENDING_NOTIFICATIONS_CAP = 20;
+
+/** Queues a WhatsApp alert that couldn't be sent immediately - see src/whatsapp.js. Caps the backlog (oldest dropped first) so a long outage doesn't flood the admin with a huge batch once reconnected. */
+async function queueWhatsAppNotification(text) {
+  await dbExec('INSERT INTO whatsapp_pending_notifications (message_text, created_at) VALUES (:t, :now)', { t: text, now: mysqlNow() });
+  await dbExec(
+    `DELETE FROM whatsapp_pending_notifications WHERE id NOT IN (
+       SELECT id FROM (SELECT id FROM whatsapp_pending_notifications ORDER BY id DESC LIMIT ${WHATSAPP_PENDING_NOTIFICATIONS_CAP}) keep
+     )`
+  );
+}
+
+async function getPendingWhatsAppNotifications() {
+  return dbAll('SELECT * FROM whatsapp_pending_notifications ORDER BY id ASC');
+}
+
+async function deletePendingWhatsAppNotification(id) {
+  await dbExec('DELETE FROM whatsapp_pending_notifications WHERE id = :id', { id });
+}
+
 module.exports = {
   DEFAULT_AGENT_OID,
   pickAgentName,
@@ -214,4 +234,7 @@ module.exports = {
   setWhatsAppAuthFile,
   deleteWhatsAppAuthFile,
   clearWhatsAppAuthFiles,
+  queueWhatsAppNotification,
+  getPendingWhatsAppNotifications,
+  deletePendingWhatsAppNotification,
 };

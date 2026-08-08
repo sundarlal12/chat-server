@@ -101,6 +101,7 @@ async function connect() {
         connectionStatus = 'connected';
         latestQrDataUrl = null;
         console.log('WhatsApp: connected.');
+        flushPendingNotifications().catch((e) => console.error('WhatsApp: flush on connect failed:', e.message));
       }
 
       if (connection === 'close') {
@@ -125,12 +126,27 @@ async function connect() {
   }
 }
 
+let periodicFlushStarted = false;
+
 /** Call once at server startup (see server.js) - safe to call again later to force a fresh connect (e.g. after an intentional logout), since connect() itself no-ops while already connecting. */
 async function start() {
   try {
     await connect();
   } catch (e) {
     console.error('WhatsApp: failed to start connection:', e.message);
+  }
+  // Fallback for the case a notification gets queued from a transient
+  // send failure (not a connection-state one) while otherwise staying
+  // connected the whole time - that only gets retried on the next
+  // reconnect's 'open' event, which might not come for a long while if
+  // the connection stays healthy. Started once regardless of how many
+  // times start() itself gets called (e.g. the admin panel's manual
+  // reconnect button).
+  if (!periodicFlushStarted) {
+    periodicFlushStarted = true;
+    setInterval(() => {
+      flushPendingNotifications().catch((e) => console.error('WhatsApp: periodic flush failed:', e.message));
+    }, 5 * 60 * 1000);
   }
 }
 
@@ -180,21 +196,68 @@ const ADMIN_NUMBERS = String(process.env.WHATSAPP_ADMIN_NUMBERS || '')
   .map((s) => s.replace(/[^0-9]/g, ''))
   .filter(Boolean);
 
-/**
- * Fire-and-forget: no-ops (doesn't throw) if not connected, no numbers are
- * configured, or an individual send fails - a WhatsApp alert failing
- * should never affect the actual ticket/message flow that triggers it.
- */
-async function notifyAdminWhatsApp(text) {
-  if (!sock || connectionStatus !== 'connected') { return; }
-  if (!ADMIN_NUMBERS.length) { return; }
+/** Sends to every configured admin number; returns true only if ALL sends succeeded. */
+async function sendToAllAdmins(text) {
+  let allOk = true;
   for (const number of ADMIN_NUMBERS) {
     const jid = `${number}@s.whatsapp.net`;
     try {
       await sock.sendMessage(jid, { text });
     } catch (e) {
       console.error(`WhatsApp: notify to ${number} failed:`, e.message);
+      allOk = false;
     }
+  }
+  return allOk;
+}
+
+/**
+ * Reported: alerts sometimes never arrived while the admin was idle - the
+ * connection is down/reconnecting after every deploy (this service
+ * redeploys often) and on ordinary drops too, and the old version just
+ * dropped the message in that window with nothing to catch up later.
+ * Doesn't throw either way - a WhatsApp alert failing should never affect
+ * the actual ticket/message flow that triggers it - but a failed/skipped
+ * send now queues (see store.queueWhatsAppNotification, capped so a long
+ * outage can't flood the admin with a huge batch) and gets retried by
+ * flushPendingNotifications() the next time the connection comes up.
+ */
+async function notifyAdminWhatsApp(text) {
+  if (!ADMIN_NUMBERS.length) { return; }
+  if (sock && connectionStatus === 'connected') {
+    const ok = await sendToAllAdmins(text);
+    if (ok) { return; }
+  }
+  try {
+    await store.queueWhatsAppNotification(text);
+  } catch (e) {
+    console.error('WhatsApp: failed to queue notification for retry:', e.message);
+  }
+}
+
+/** Called on every successful (re)connect - see connection.update's 'open' handler above. */
+async function flushPendingNotifications() {
+  if (!sock || connectionStatus !== 'connected') { return; }
+  if (!ADMIN_NUMBERS.length) { return; }
+  let pending;
+  try {
+    pending = await store.getPendingWhatsAppNotifications();
+  } catch (e) {
+    console.error('WhatsApp: failed to read queued notifications:', e.message);
+    return;
+  }
+  if (!pending.length) { return; }
+  console.log(`WhatsApp: flushing ${pending.length} queued notification(s).`);
+  for (const row of pending) {
+    const ok = await sendToAllAdmins(row.message_text);
+    if (!ok) {
+      // Connection likely dropped again mid-flush - stop here rather than
+      // failing through the rest one by one; everything still in the
+      // queue (this row included) gets retried on the next reconnect.
+      break;
+    }
+    try { await store.deletePendingWhatsAppNotification(row.id); }
+    catch (e) { console.error('WhatsApp: failed to clear a flushed notification:', e.message); }
   }
 }
 
