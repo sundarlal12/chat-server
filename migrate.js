@@ -98,6 +98,14 @@ async function migrate() {
   // unattended messages relayed, but only until an admin actually starts
   // handling the conversation.
   await ensureColumn('chat_tickets', 'admin_first_replied_at', 'DATETIME NULL');
+  // Set once, the first time the deposit-image auto-reply actually sends
+  // on this ticket (either trigger - see maybeAutoReplyToDepositGreeting
+  // in chatLogic.js) - operator report: customers got annoyed being sent
+  // the QR again on every later deposit-related message in the same
+  // conversation. Capped at once per ticket now regardless of which
+  // trigger or how many times it would otherwise match; a genuinely new
+  // ticket gets it again.
+  await ensureColumn('chat_tickets', 'deposit_qr_sent_at', 'DATETIME NULL');
 
   await createTableIfMissing('chat_messages', `
     CREATE TABLE chat_messages (

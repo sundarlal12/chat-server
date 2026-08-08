@@ -302,12 +302,15 @@ const DEPOSIT_KEYWORD_RE = /\b(deposit|add\s*(money|cash|funds?)|recharge|how\s*
  *     (DEPOSIT_KEYWORD_RE, e.g. "deposit kese kre"/"how to deposit"/
  *     "deposit") - the follow-up request, since customers sometimes ask
  *     about depositing regardless of which topic they actually opened the
- *     ticket under (e.g. asking "deposit fund" while in the Withdraw tab),
- *     and may ask more than once, not just as their first message. Unlike
- *     trigger 1, this one can fire more than once per ticket by design
- *     (operator explicitly accepted that tradeoff over missing a later
- *     ask). Reply text: DEPOSIT_KEYWORD_TEXT (not the greeting text - this
- *     can fire at any time of day, not just as an opening greeting).
+ *     ticket under (e.g. asking "deposit fund" while in the Withdraw tab).
+ *     Reply text: DEPOSIT_KEYWORD_TEXT (not the greeting text - this can
+ *     fire at any time of day, not just as an opening greeting).
+ *
+ * Capped at once per ticket total across BOTH triggers (deposit_qr_sent_at
+ * on the ticket row) - originally trigger 2 could fire on every matching
+ * message, but customers found repeated QR sends in the same conversation
+ * annoying, so now whichever trigger fires first "uses up" the send for
+ * that ticket; a genuinely new ticket gets it again.
  *
  * Call this after insertMessage() succeeds, from a caller that has `io` to
  * broadcast the result(s) (see routes/tickets.js and socket/index.js's
@@ -346,6 +349,11 @@ async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message)
     && DEPOSIT_KEYWORD_RE.test(content);
 
   if (!isFirstDepositGreeting && !isDepositKeywordMention) { return []; }
+  // Capped at once per ticket (operator report: repeated QR sends on
+  // every later deposit-related message annoyed customers) - covers BOTH
+  // triggers with one flag, since either one sending it once is enough; a
+  // genuinely new ticket (deposit_qr_sent_at unset) gets it again.
+  if (ticketBeforeThisMessage.deposit_qr_sent_at) { return []; }
   const replyText = isFirstDepositGreeting ? DEPOSIT_GREETING_TEXT : DEPOSIT_KEYWORD_TEXT;
 
   const attachment = await store.getAttachment(DEPOSIT_GREETING_ATTACHMENT_OID);
@@ -390,6 +398,8 @@ async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message)
     attachment_name: attachment.original_name || '',
     attachment_size: attachment.size_bytes || 0,
   });
+
+  await store.updateTicket(String(ticket.oid), { deposit_qr_sent_at: imageMessage.created_at });
 
   // Operator call: the image's own caption already carries the text
   // (see above), so a separate follow-up text message is redundant - just
