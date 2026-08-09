@@ -94,6 +94,24 @@ app.get('/health/php-check', async (req, res) => {
   res.json(out);
 });
 
+// Diagnostic-only, temporary: reveals this deployment's actual outbound
+// (egress) IP, via a public IP-echo service - needed specifically because
+// /health/php-check confirmed papa777.sbs is fully reachable from
+// elsewhere but times out from THIS deployment (same "Hostinger blocking
+// Railway's IP" class of issue already seen once with MySQL - see
+// README), and Railway doesn't surface its egress IP anywhere in its own
+// dashboard on the base plan. Whatever IP this reports is what needs
+// allowlisting on the Hostinger/firewall side in front of papa777.sbs.
+app.get('/health/egress-ip', async (req, res) => {
+  try {
+    const r = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(8000) });
+    const body = await r.json();
+    res.json({ egressIp: body.ip });
+  } catch (e) {
+    res.status(500).json({ error: String((e && e.message) || e) });
+  }
+});
+
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
   cors: { origin: '*' },
