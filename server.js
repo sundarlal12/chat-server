@@ -14,6 +14,7 @@ const { createAdminRouter } = require('./src/routes/admin');
 const whatsappPage = require('./src/routes/whatsappPage');
 const { attachChatSocket } = require('./src/socket');
 const whatsapp = require('./src/whatsapp');
+const phpHealthMonitor = require('./src/phpHealthMonitor');
 const { migrate } = require('./migrate');
 
 // PHP_API_BASE_URL: auth and display-name lookups delegate to the PHP API
@@ -170,6 +171,10 @@ migrate()
     // session) can take a few seconds, and a WhatsApp-side hiccup
     // shouldn't hold up the whole service coming up.
     whatsapp.start();
+    // Proactive PHP-reachability monitor (see src/phpHealthMonitor.js) -
+    // alerts on WhatsApp if PHP becomes unreachable, independently of
+    // whether any real user hits it first.
+    phpHealthMonitor.start();
   })
   .catch((e) => {
     console.error('Migration failed, not starting:', e);

@@ -12,20 +12,52 @@ const BASE_URL = process.env.PHP_API_BASE_URL || 'https://papa777.sbs';
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const cache = new Map(); // token -> { user, expiresAt }
 
+const FETCH_TIMEOUT_MS = 5000;
+const MAX_ATTEMPTS = 3;
+const RETRY_BACKOFF_MS = 500;
+
+/**
+ * Retries only on a NETWORK-level failure (fetch() itself throwing -
+ * DNS/timeout/connection reset), never on a clean HTTP response with a
+ * non-2xx status (a real 401 for a bad/expired token should fail
+ * immediately, not retry). Confirmed live: papa777.sbs went briefly
+ * unreachable from this deployment (ETIMEDOUT) while fully healthy from
+ * everywhere else, then self-resolved - DNS round-robins across multiple
+ * backend IPs, consistent with one flaky backend rather than a blanket
+ * block, which a retry (getting a fresh DNS lookup each attempt) has a
+ * real chance of routing around. Shorter 5s-per-attempt timeout (down
+ * from the original single 10s) keeps the worst case (3 attempts + two
+ * backoffs) bounded at ~16.5s instead of stacking three full 10s waits.
+ */
+async function fetchUserData(token) {
+  let lastErr;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      return await fetch(`${BASE_URL}/v1/api/get-user-data`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+    } catch (e) {
+      lastErr = e;
+      if (attempt < MAX_ATTEMPTS) { await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS * attempt)); }
+    }
+  }
+  throw lastErr;
+}
+
 async function getUserInfo(token) {
   const cached = cache.get(token);
   if (cached && cached.expiresAt > Date.now()) { return cached.user; }
 
-  // Without an explicit timeout, a slow/stuck connection to PHP (already
-  // seen once in production - a stuck connection pool made this hang
-  // indefinitely until the process was restarted) leaves every caller
-  // waiting forever, since fetch() has no default timeout of its own.
-  // Fail fast instead so a PHP-side hiccup surfaces as a normal auth
-  // error rather than a socket connection that never resolves.
-  const res = await fetch(`${BASE_URL}/v1/api/get-user-data`, {
-    headers: { Authorization: `Bearer ${token}` },
-    signal: AbortSignal.timeout(10000),
-  });
+  // A network failure that survives all retries still propagates (not
+  // swallowed to null) - that's a real, sustained outage on our/PHP's
+  // side, not the caller's bad credentials, and callers already map an
+  // uncaught error here to 500 "Service temporarily unavailable" rather
+  // than a misleading 401 "Please authenticate" (see src/auth.js) - worth
+  // keeping that distinction so this is still diagnosable from the
+  // outside, which is exactly what surfaced the original PHP-
+  // unreachable incident this retry logic is meant to absorb.
+  const res = await fetchUserData(token);
   if (!res.ok) { return null; }
   const body = await res.json();
   const result = body && body.result;
