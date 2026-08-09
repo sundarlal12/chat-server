@@ -2,7 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const { asyncRoute } = require('../asyncRoute');
 const { verifyPassword, issueAdminToken, requireAdminAuth } = require('../adminAuth');
-const { insertAdminMessage } = require('../chatLogic');
+const { insertAdminMessage, closeTicketAsAdmin } = require('../chatLogic');
 const { ticketDoc, messageDoc } = require('../docs');
 const { socketMessageDoc, chatMessageEventName } = require('../socketDocs');
 const { ADMIN_ROOM, isCustomerConnected } = require('../socket');
@@ -126,6 +126,23 @@ function createAdminRouter(io) {
         ticketId: ticket.oid,
       });
     }
+  }));
+
+  /**
+   * POST /admin/api/tickets/:oid/close - admin manually ends the chat
+   * (operator request - previously only the customer closing via
+   * submit-rating ever changed a ticket's status, so a ticket a customer
+   * never explicitly rated just stayed "open" indefinitely). Broadcasts
+   * "ticket-updated" - the same event submit-rating already uses - so the
+   * customer's own app reacts the same way regardless of who closed it.
+   */
+  router.post('/tickets/:oid/close', asyncRoute(async (req, res) => {
+    const ticket = await store.getTicketByOid(req.params.oid);
+    if (!ticket) { return res.status(404).json({ code: 404, message: 'Ticket not found' }); }
+    const updated = await closeTicketAsAdmin(ticket);
+    io.to(String(ticket.oid)).emit('ticket-updated', { ticketId: String(ticket.oid), status: updated.status });
+    io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: adminTicketDoc(updated).lastActivity });
+    res.json({ status: 1, data: adminTicketDoc(updated), message: 'Ticket closed' });
   }));
 
   /** POST /admin/api/upload - same chat_attachments BLOB storage the customer-side upload uses. */

@@ -147,10 +147,16 @@
   /* ---------- Chat panel ---------- */
   #chat-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
   #chat-placeholder { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-faint); font-size: 13px; }
-  #chat-header { padding: 14px 18px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  #chat-header { padding: 14px 18px; border-bottom: 1px solid var(--border); background: var(--surface); display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
   #chat-header .name { font-size: 14px; font-weight: 700; color: var(--text); }
   #chat-header .name .phone { font-size: 12px; font-weight: 500; color: var(--text-muted); }
   #chat-header .subject { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  #end-chat-btn {
+    flex-shrink: 0; background: var(--surface-alt); color: var(--danger-text); border: 1px solid var(--border);
+    padding: 6px 12px; border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer;
+  }
+  #end-chat-btn:hover { background: var(--danger-bg); }
+  #end-chat-btn:disabled { opacity: 0.5; cursor: default; }
   #messages { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 10px; }
   .msg { max-width: 60%; padding: 9px 13px; border-radius: 12px; font-size: 13px; line-height: 1.4; word-wrap: break-word; box-shadow: var(--shadow); }
   .msg.in { align-self: flex-start; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-bottom-left-radius: 3px; }
@@ -404,8 +410,14 @@
     currentTicket = data.ticket;
 
     $('#chat-header').innerHTML = `
-      <div class="name">${escapeHtml(currentTicket.customerFullName || currentTicket.customerName || 'Customer')}${currentTicket.customerPhone ? ` <span class="phone">📱 ${escapeHtml(currentTicket.customerPhone)}</span>` : ''}</div>
-      <div class="subject">${escapeHtml(currentTicket.subject)} · <span class="badge ${currentTicket.status === 'closed' ? 'closed' : 'open'}">${escapeHtml(currentTicket.status)}</span></div>`;
+      <div>
+        <div class="name">${escapeHtml(currentTicket.customerFullName || currentTicket.customerName || 'Customer')}${currentTicket.customerPhone ? ` <span class="phone">📱 ${escapeHtml(currentTicket.customerPhone)}</span>` : ''}</div>
+        <div class="subject">${escapeHtml(currentTicket.subject)} · <span class="badge ${currentTicket.status === 'closed' ? 'closed' : 'open'}">${escapeHtml(currentTicket.status)}</span></div>
+      </div>
+      ${currentTicket.status !== 'closed' ? '<button id="end-chat-btn">End Chat</button>' : ''}`;
+
+    const endChatBtn = document.getElementById('end-chat-btn');
+    if (endChatBtn) { endChatBtn.addEventListener('click', () => endChat(ticketId)); }
 
     const box = $('#messages');
     box.innerHTML = '';
@@ -420,6 +432,20 @@
     $('#msg-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendCurrentMessage(); }
     });
+  }
+
+  async function endChat(ticketId) {
+    if (!window.confirm('End this chat? The customer will see it as closed.')) { return; }
+    const btn = document.getElementById('end-chat-btn');
+    if (btn) { btn.disabled = true; }
+    try {
+      await api('/tickets/' + ticketId + '/close', { method: 'POST' });
+      if (ticketId === currentTicketId) { openTicket(ticketId); }
+      loadTickets();
+    } catch (e) {
+      alert(e.message || 'Failed to end chat');
+      if (btn) { btn.disabled = false; }
+    }
   }
 
   function appendMessage(m, skipDedupe) {

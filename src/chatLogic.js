@@ -482,6 +482,23 @@ async function submitRating(user, { ticketId, rating, feedback }) {
   });
 }
 
+/**
+ * Admin-initiated close (operator request) - previously the only way a
+ * ticket ever closed was the CUSTOMER submitting a rating; there was no
+ * way for an admin to end a chat themselves, so an open ticket a customer
+ * never explicitly rated/closed just stayed open indefinitely, however
+ * long they went quiet before messaging again. No rating attached here -
+ * that field is the customer's own satisfaction score, not something an
+ * admin fills in on their behalf.
+ */
+async function closeTicketAsAdmin(ticket) {
+  if (String(ticket.status) === 'closed') { throw httpError(400, 'This ticket is already closed'); }
+  return store.updateTicket(String(ticket.oid), {
+    status: 'closed',
+    resolved_at: ticket.resolved_at || new Date(),
+  });
+}
+
 function httpError(status, message) {
   const e = new Error(message);
   e.httpStatus = status;
@@ -489,6 +506,6 @@ function httpError(status, message) {
 }
 
 module.exports = {
-  createOrGetTicket, insertMessage, insertAdminMessage, markMessagesRead, submitRating, httpError,
+  createOrGetTicket, insertMessage, insertAdminMessage, markMessagesRead, submitRating, closeTicketAsAdmin, httpError,
   normalizeFileMessageItem, resolveInlineAttachment, maybeAutoReplyToDepositGreeting,
 };
