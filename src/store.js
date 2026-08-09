@@ -63,21 +63,36 @@ async function insertTicket(t) {
   return getTicketByOid(t.oid);
 }
 
-/** Admin ticket list - most recently active first, optionally filtered by status. */
-async function getAllTickets({ status, limit, offset } = {}) {
-  const where = status ? 'WHERE status = :status' : '';
-  const params = status ? { status } : {};
+/** Builds the shared WHERE clause for the admin ticket list/count below - status filter and/or a name/full-name/mobile search (operator request, fast lookup by customer). */
+function ticketListWhere({ status, search }) {
+  const clauses = [];
+  const params = {};
+  if (status) { clauses.push('status = :status'); params.status = status; }
+  if (search) {
+    clauses.push('(customer_name LIKE :search OR customer_full_name LIKE :search OR customer_phone LIKE :search)');
+    params.search = `%${search}%`;
+  }
+  return { where: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '', params };
+}
+
+/** Admin ticket list - most recently active first, optionally filtered by status and/or a customer name/mobile search. */
+async function getAllTickets({ status, search, limit, offset } = {}) {
+  const { where, params } = ticketListWhere({ status, search });
   return dbAll(
     `SELECT * FROM chat_tickets ${where} ORDER BY last_activity DESC, id DESC LIMIT ${Number(limit || 50)} OFFSET ${Number(offset || 0)}`,
     params
   );
 }
 
-async function countAllTickets({ status } = {}) {
-  const where = status ? 'WHERE status = :status' : '';
-  const params = status ? { status } : {};
+async function countAllTickets({ status, search } = {}) {
+  const { where, params } = ticketListWhere({ status, search });
   const row = await dbOne(`SELECT COUNT(*) AS n FROM chat_tickets ${where}`, params);
   return Number(row?.n || 0);
+}
+
+/** Every ticket (any status) for one customer, newest first - "previous chats with this customer" in the admin panel (operator request), not just their current one. */
+async function getTicketsForUserOid(userOid) {
+  return dbAll('SELECT * FROM chat_tickets WHERE user_oid = :u ORDER BY created_at DESC, id DESC', { u: userOid });
 }
 
 async function getAdminByUsername(username) {
@@ -221,6 +236,7 @@ module.exports = {
   updateTicket,
   getAllTickets,
   countAllTickets,
+  getTicketsForUserOid,
   getAdminByUsername,
   getMessages,
   countMessages,

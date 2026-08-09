@@ -121,6 +121,12 @@
 
   /* ---------- Ticket list ---------- */
   #ticket-panel { width: 320px; border-right: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; flex-shrink: 0; }
+  #ticket-search-box { padding: 12px 12px 0; }
+  #ticket-search {
+    width: 100%; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface-alt); color: var(--text); font-size: 13px;
+  }
+  #ticket-search:focus { outline: none; border-color: var(--brand); }
   #status-tabs { display: flex; gap: 6px; padding: 12px; border-bottom: 1px solid var(--border); }
   #status-tabs button {
     flex: 1; background: var(--surface-alt); border: 1px solid var(--border); color: var(--text-muted); padding: 7px 0;
@@ -157,6 +163,21 @@
   }
   #end-chat-btn:hover { background: var(--danger-bg); }
   #end-chat-btn:disabled { opacity: 0.5; cursor: default; }
+  .header-btns { flex-shrink: 0; display: flex; gap: 8px; }
+  .secondary-btn {
+    background: var(--surface-alt); color: var(--text-muted); border: 1px solid var(--border);
+    padding: 6px 12px; border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer;
+  }
+  .secondary-btn:hover { background: var(--brand-soft); color: var(--brand); }
+  #ticket-history-panel { border-bottom: 1px solid var(--border); background: var(--surface-alt); max-height: 220px; overflow-y: auto; }
+  #ticket-history-panel .history-row {
+    padding: 10px 18px; border-bottom: 1px solid var(--border); cursor: pointer; font-size: 12px;
+  }
+  #ticket-history-panel .history-row:hover { background: var(--brand-soft); }
+  #ticket-history-panel .history-row.current { background: var(--brand-soft); cursor: default; }
+  #ticket-history-panel .history-row .subject { font-weight: 600; color: var(--text); }
+  #ticket-history-panel .history-row .meta { color: var(--text-muted); margin-top: 2px; display: flex; justify-content: space-between; }
+  #ticket-history-empty { padding: 14px 18px; color: var(--text-faint); font-size: 12px; }
   #messages { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 10px; }
   .msg { max-width: 60%; padding: 9px 13px; border-radius: 12px; font-size: 13px; line-height: 1.4; word-wrap: break-word; box-shadow: var(--shadow); }
   .msg.in { align-self: flex-start; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-bottom-left-radius: 3px; }
@@ -215,6 +236,9 @@
   </header>
   <div id="main">
     <div id="ticket-panel">
+      <div id="ticket-search-box">
+        <input id="ticket-search" type="text" placeholder="Search name or mobile…" />
+      </div>
       <div id="status-tabs">
         <button data-status="open" class="active">Open</button>
         <button data-status="closed">Closed</button>
@@ -235,6 +259,8 @@
   let adminInfo = null;
   let socket = null;
   let currentStatus = 'open';
+  let currentSearch = '';
+  let searchDebounceTimer = null;
   let currentTicketId = null;
   let currentTicket = null;
   let renderedMessageIds = new Set();
@@ -357,11 +383,21 @@
     });
   });
 
+  $('#ticket-search').addEventListener('input', (e) => {
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(() => {
+      currentSearch = e.target.value.trim();
+      loadTickets();
+    }, 300);
+  });
+
   async function loadTickets() {
     let data;
     try {
-      const qs = currentStatus ? ('?status=' + encodeURIComponent(currentStatus) + '&limit=100') : '?limit=100';
-      data = await api('/tickets' + qs);
+      const params = new URLSearchParams({ limit: '100' });
+      if (currentStatus) { params.set('status', currentStatus); }
+      if (currentSearch) { params.set('search', currentSearch); }
+      data = await api('/tickets?' + params.toString());
     } catch (e) { return; }
     const list = $('#ticket-list');
     if (!data.data.length) {
@@ -393,6 +429,7 @@
     const panel = $('#chat-panel');
     panel.innerHTML = `
       <div id="chat-header"><div class="name">Loading…</div></div>
+      <div id="ticket-history-panel" class="hidden"></div>
       <div id="messages"></div>
       <div id="pending-file"></div>
       <div id="composer">
@@ -414,10 +451,14 @@
         <div class="name">${escapeHtml(currentTicket.customerFullName || currentTicket.customerName || 'Customer')}${currentTicket.customerPhone ? ` <span class="phone">📱 ${escapeHtml(currentTicket.customerPhone)}</span>` : ''}</div>
         <div class="subject">${escapeHtml(currentTicket.subject)} · <span class="badge ${currentTicket.status === 'closed' ? 'closed' : 'open'}">${escapeHtml(currentTicket.status)}</span></div>
       </div>
-      ${currentTicket.status !== 'closed' ? '<button id="end-chat-btn">End Chat</button>' : ''}`;
+      <div class="header-btns">
+        <button id="history-btn" class="secondary-btn">History</button>
+        ${currentTicket.status !== 'closed' ? '<button id="end-chat-btn">End Chat</button>' : ''}
+      </div>`;
 
     const endChatBtn = document.getElementById('end-chat-btn');
     if (endChatBtn) { endChatBtn.addEventListener('click', () => endChat(ticketId)); }
+    document.getElementById('history-btn').addEventListener('click', () => toggleHistory(currentTicket.customerId));
 
     const box = $('#messages');
     box.innerHTML = '';
@@ -446,6 +487,38 @@
       alert(e.message || 'Failed to end chat');
       if (btn) { btn.disabled = false; }
     }
+  }
+
+  /** Previous chats with this customer, not just whichever ticket is currently open (operator request). Fetches fresh every open since a new ticket could have appeared since last shown. */
+  async function toggleHistory(customerId) {
+    const panel = $('#ticket-history-panel');
+    if (!panel) { return; }
+    if (!panel.classList.contains('hidden')) { panel.classList.add('hidden'); return; }
+
+    panel.classList.remove('hidden');
+    panel.innerHTML = '<div id="ticket-history-empty">Loading…</div>';
+    let data;
+    try {
+      data = await api('/customers/' + customerId + '/tickets');
+    } catch (e) {
+      panel.innerHTML = '<div id="ticket-history-empty">Failed to load history.</div>';
+      return;
+    }
+    if (!data.data.length) {
+      panel.innerHTML = '<div id="ticket-history-empty">No previous chats.</div>';
+      return;
+    }
+    panel.innerHTML = data.data.map((t) => `
+      <div class="history-row ${t.id === currentTicketId ? 'current' : ''}" data-id="${t.id}">
+        <div class="subject">${escapeHtml(t.subject)}${t.id === currentTicketId ? ' (current)' : ''}</div>
+        <div class="meta">
+          <span class="badge ${t.status === 'closed' ? 'closed' : 'open'}">${escapeHtml(t.status)}</span>
+          <span>${new Date(t.createdAt).toLocaleString()}</span>
+        </div>
+      </div>`).join('');
+    panel.querySelectorAll('.history-row:not(.current)').forEach((row) => {
+      row.addEventListener('click', () => { panel.classList.add('hidden'); openTicket(row.dataset.id); });
+    });
   }
 
   function appendMessage(m, skipDedupe) {

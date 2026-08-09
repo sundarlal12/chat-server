@@ -67,16 +67,28 @@ function createAdminRouter(io) {
 
   router.use(requireAdminAuth());
 
-  /** GET /admin/api/tickets?status=&limit=&offset= - most recently active first. */
+  /** GET /admin/api/tickets?status=&search=&limit=&offset= - most recently active first. search matches customer name/full name/mobile (operator request - fast lookup). */
   router.get('/tickets', asyncRoute(async (req, res) => {
     const status = (req.query.status || '').trim() || undefined;
+    const search = (req.query.search || '').trim() || undefined;
     const limit = Math.min(Number(req.query.limit) || 50, 200);
     const offset = Number(req.query.offset) || 0;
     const [rows, total] = await Promise.all([
-      store.getAllTickets({ status, limit, offset }),
-      store.countAllTickets({ status }),
+      store.getAllTickets({ status, search, limit, offset }),
+      store.countAllTickets({ status, search }),
     ]);
     res.json({ status: 1, total, data: rows.map(adminTicketDoc) });
+  }));
+
+  /**
+   * GET /admin/api/customers/:userOid/tickets - every ticket (any status)
+   * for one customer, newest first (operator request: "previous chats
+   * with this customer", not just whichever one is currently open/being
+   * viewed).
+   */
+  router.get('/customers/:userOid/tickets', asyncRoute(async (req, res) => {
+    const rows = await store.getTicketsForUserOid(req.params.userOid);
+    res.json({ status: 1, data: rows.map(adminTicketDoc) });
   }));
 
   /** GET /admin/api/tickets/:oid/messages - full history, oldest first. */
