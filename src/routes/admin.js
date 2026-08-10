@@ -147,12 +147,57 @@ function createAdminRouter(io) {
    * never explicitly rated just stayed "open" indefinitely). Broadcasts
    * "ticket-updated" - the same event submit-rating already uses - so the
    * customer's own app reacts the same way regardless of who closed it.
+   *
+   * Optional rating/feedback (the admin close dialog always sends one -
+   * see public/admin/index.html): rather than trust the customer's app to
+   * render an unfamiliar rating field on an admin-side closure, this posts
+   * it as a normal chat message FIRST (same broadcast/push path
+   * POST .../messages already uses, so it's guaranteed visible in their
+   * chat history and triggers the same push notification), then closes
+   * the ticket with the rating attached to the DB row too. Message has to
+   * go in before the close - insertAdminMessage refuses to post into an
+   * already-closed ticket.
    */
   router.post('/tickets/:oid/close', asyncRoute(async (req, res) => {
     const ticket = await store.getTicketByOid(req.params.oid);
     if (!ticket) { return res.status(404).json({ code: 404, message: 'Ticket not found' }); }
-    const updated = await closeTicketAsAdmin(ticket);
-    io.to(String(ticket.oid)).emit('ticket-updated', { ticketId: String(ticket.oid), status: updated.status });
+
+    const { rating, feedback } = req.body || {};
+    const hasRating = rating !== undefined && rating !== null && rating !== '';
+    const ratingNum = hasRating ? Number(rating) : null;
+    // Validated up front, matching closeTicketAsAdmin's own check - the
+    // closing message below has to go in BEFORE the ticket closes (see
+    // this route's comment), so validating late would let an invalid
+    // rating leave a "chat closed" message sent to the customer while the
+    // close itself then fails.
+    if (hasRating && (!Number.isInteger(ratingNum) || ratingNum < 1 || ratingNum > 5)) {
+      return res.status(400).json({ code: 400, message: 'rating must be an integer 1-5' });
+    }
+
+    let closingMessage = null;
+    if (hasRating) {
+      const stars = '⭐'.repeat(ratingNum);
+      const feedbackText = String(feedback || '').trim();
+      const text = feedbackText ? `Chat closed. Rating: ${stars} (${ratingNum}/5)\n${feedbackText}` : `Chat closed. Rating: ${stars} (${ratingNum}/5)`;
+      closingMessage = await insertAdminMessage(req.admin, ticket, { message: text });
+    }
+
+    const updated = await closeTicketAsAdmin(ticket, { rating: hasRating ? ratingNum : undefined, feedback });
+
+    if (closingMessage) {
+      const doc = socketMessageDoc(closingMessage);
+      io.to(String(ticket.oid)).emit('send-message', { success: true, message: 'Message sent successfully', messageDoc: doc });
+      io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: messageDoc(closingMessage).createdAt });
+      if (!isCustomerConnected(io, ticket.oid)) {
+        sendChatPushNotification(ticket.customer_fcm_token, {
+          title: String(ticket.agent_name || 'Support'),
+          body: chatPushBody(closingMessage),
+          ticketId: ticket.oid,
+        });
+      }
+    }
+
+    io.to(String(ticket.oid)).emit('ticket-updated', { ticketId: String(ticket.oid), status: updated.status, rating: updated.rating || null, feedback: updated.feedback || '' });
     io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: adminTicketDoc(updated).lastActivity });
     res.json({ status: 1, data: adminTicketDoc(updated), message: 'Ticket closed' });
   }));

@@ -483,20 +483,32 @@ async function submitRating(user, { ticketId, rating, feedback }) {
 }
 
 /**
- * Admin-initiated close (operator request) - previously the only way a
- * ticket ever closed was the CUSTOMER submitting a rating; there was no
- * way for an admin to end a chat themselves, so an open ticket a customer
- * never explicitly rated/closed just stayed open indefinitely, however
- * long they went quiet before messaging again. No rating attached here -
- * that field is the customer's own satisfaction score, not something an
- * admin fills in on their behalf.
+ * Admin-initiated close (operator request). Originally carried no rating
+ * at all (that field was the customer's own satisfaction score) - since
+ * reversed by a follow-up operator request: the admin close dialog (see
+ * public/admin/index.html) now always submits a rating/feedback of its
+ * own, same 1-5 integer scale and DB columns submitRating uses so it
+ * displays identically wherever a rating is shown. Still optional here at
+ * the chatLogic layer (rating omitted -> closes with no rating) for any
+ * caller other than that dialog. The customer-visible side of this - a
+ * chat message announcing the closure/rating - is built by the route
+ * BEFORE this runs (see routes/admin.js), since insertAdminMessage
+ * refuses to post into an already-closed ticket.
  */
-async function closeTicketAsAdmin(ticket) {
+async function closeTicketAsAdmin(ticket, { rating, feedback } = {}) {
   if (String(ticket.status) === 'closed') { throw httpError(400, 'This ticket is already closed'); }
-  return store.updateTicket(String(ticket.oid), {
+
+  const update = {
     status: 'closed',
     resolved_at: ticket.resolved_at || new Date(),
-  });
+  };
+  if (rating !== undefined && rating !== null && rating !== '') {
+    const ratingNum = Number(rating);
+    if (!Number.isInteger(ratingNum) || ratingNum < 1 || ratingNum > 5) { throw httpError(400, 'rating must be an integer 1-5'); }
+    update.rating = ratingNum;
+    update.feedback = (feedback || '').trim().slice(0, 1000);
+  }
+  return store.updateTicket(String(ticket.oid), update);
 }
 
 function httpError(status, message) {
