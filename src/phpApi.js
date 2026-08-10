@@ -10,7 +10,16 @@
  */
 const BASE_URL = process.env.PHP_API_BASE_URL || 'https://papa777.sbs';
 const CACHE_TTL_MS = 5 * 60 * 1000;
-const cache = new Map(); // token -> { user, expiresAt }
+// How much longer, past the normal 5-minute TTL, a session that was
+// genuinely verified once is still trusted IF PHP is unreachable when it's
+// time to refresh (see the catch block in getUserInfo below) - not "how
+// long a session lasts", just how much slack a real, already-seen user gets
+// during exactly the transient-outage window phpHealthMonitor.js exists to
+// catch. Chosen to comfortably cover "user opens camera app, takes a photo,
+// comes back" (the file-upload path this was written for - see
+// routes/attachments.js), not to extend session lifetime in general.
+const STALE_GRACE_MS = 30 * 60 * 1000;
+const cache = new Map(); // token -> { user, expiresAt, cachedAt }
 
 const FETCH_TIMEOUT_MS = 5000;
 const MAX_ATTEMPTS = 3;
@@ -49,16 +58,35 @@ async function getUserInfo(token) {
   const cached = cache.get(token);
   if (cached && cached.expiresAt > Date.now()) { return cached.user; }
 
-  // A network failure that survives all retries still propagates (not
-  // swallowed to null) - that's a real, sustained outage on our/PHP's
-  // side, not the caller's bad credentials, and callers already map an
-  // uncaught error here to 500 "Service temporarily unavailable" rather
-  // than a misleading 401 "Please authenticate" (see src/auth.js) - worth
-  // keeping that distinction so this is still diagnosable from the
-  // outside, which is exactly what surfaced the original PHP-
-  // unreachable incident this retry logic is meant to absorb.
-  const res = await fetchUserData(token);
-  if (!res.ok) { return null; }
+  let res;
+  try {
+    res = await fetchUserData(token);
+  } catch (e) {
+    // The retries in fetchUserData already absorb a single blip - this is
+    // for the case a customer hits mid-upload: the socket connected (and
+    // cached this exact token) MORE than 5 minutes ago - e.g. they left the
+    // app to take a camera photo - so this refresh is a routine cache
+    // expiry, not a first-time login, right as PHP happens to be in one of
+    // the transient-unreachable windows phpHealthMonitor.js alerts on (see
+    // its comment, and the 25c41c8 commit that added the retry above). A
+    // user who was already verified shouldn't get a hard-failed upload over
+    // that - trust the stale record a bit longer instead of throwing.
+    // Only a real, clean 401 below (not a network failure) ever evicts the
+    // cache entry, so this can't resurrect a genuinely revoked/banned user.
+    if (cached && (Date.now() - cached.cachedAt) < CACHE_TTL_MS + STALE_GRACE_MS) {
+      console.warn(`PHP unreachable (${e.message}); serving stale cached auth (~${Math.round((Date.now() - cached.cachedAt) / 1000)}s old) instead of failing this request.`);
+      return cached.user;
+    }
+    throw e;
+  }
+
+  if (!res.ok) {
+    // A clean, non-network response saying "no" (bad/expired/banned token)
+    // is authoritative - drop any stale record so the fallback above can
+    // never serve a session PHP has actually rejected.
+    cache.delete(token);
+    return null;
+  }
   const body = await res.json();
   const result = body && body.result;
   if (!result || !result._id) { return null; }
@@ -83,7 +111,7 @@ async function getUserInfo(token) {
     phoneNumber: String(result.phoneNumber || ''),
     countryCode: String(result.countryCode || ''),
   };
-  cache.set(token, { user, expiresAt: Date.now() + CACHE_TTL_MS });
+  cache.set(token, { user, expiresAt: Date.now() + CACHE_TTL_MS, cachedAt: Date.now() });
   return user;
 }
 
