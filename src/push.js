@@ -50,19 +50,49 @@ function getApp() {
  * Fire-and-forget: logs and swallows any failure (invalid/expired token,
  * FCM outage, bad credentials) rather than letting a push failure affect
  * the caller, which has already finished the actual message send.
+ *
+ * Sends `title`/`body` in BOTH the standard FCM `notification` block AND
+ * `data` - confirmed via the app's own decompiled MyFirebaseMessagingService:
+ * when the app is backgrounded, Android's FCM SDK auto-displays the system
+ * tray notification straight from the `notification` block without the
+ * app's code ever running, which is why "normal" pushes looked fine. But
+ * whenever the app is foregrounded, onMessageReceived() always runs and
+ * builds its OWN notification entirely from `data` - completely ignoring
+ * `notification.title`/`.body` - reading specific keys ("title", "body",
+ * "notificationCode", "messageDoc", "imageUrl", "videoUrl",
+ * "actionButtonName") via a small enum-keyed map. This service's `data`
+ * previously only ever contained `ticketId`, so every push looked BLANK
+ * whenever the app happened to be in the foreground - not unique to the
+ * close-with-rating push that surfaced it (reported: admin closing a chat
+ * with a rating produced an empty notification), every push this service
+ * sends was silently affected the same way.
+ * notificationCode "1" is NOTIFICATION_CHAT_SUPPORT (confirmed via the same
+ * decompiled enum) - besides being the semantically correct type, it also
+ * gets this app's own "don't show a notification if this ticket's chat
+ * screen is already open" suppression for free, matching its other chat
+ * pushes, instead of falling back to the generic default type.
  */
-async function sendChatPushNotification(fcmToken, { title, body, ticketId }) {
+async function sendChatPushNotification(fcmToken, { title, body, ticketId, messageDoc }) {
   const token = String(fcmToken || '').trim();
   if (!token) { return; }
 
   const firebaseApp = getApp();
   if (!firebaseApp) { return; }
 
+  const titleStr = String(title || 'Support');
+  const bodyStr = String(body || 'New message');
+
   try {
     await admin.messaging(firebaseApp).send({
       token,
-      notification: { title: String(title || 'Support'), body: String(body || 'New message') },
-      data: { ticketId: String(ticketId || '') },
+      notification: { title: titleStr, body: bodyStr },
+      data: {
+        title: titleStr,
+        body: bodyStr,
+        notificationCode: '1',
+        messageDoc: messageDoc ? JSON.stringify(messageDoc) : '',
+        ticketId: String(ticketId || ''),
+      },
       android: { priority: 'high' },
     });
   } catch (e) {

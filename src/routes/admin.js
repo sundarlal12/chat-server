@@ -136,6 +136,7 @@ function createAdminRouter(io) {
         title: String(ticket.agent_name || 'Support'),
         body: chatPushBody(message),
         ticketId: ticket.oid,
+        messageDoc: doc,
       });
     }
   }));
@@ -202,6 +203,7 @@ function createAdminRouter(io) {
         title: 'Chat Ended',
         body: chatPushBody(closingMessage),
         ticketId: ticket.oid,
+        messageDoc: doc,
       });
     }
 

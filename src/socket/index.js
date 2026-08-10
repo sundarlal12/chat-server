@@ -351,6 +351,7 @@ function attachAdminHandlers(io, socket) {
           title: String(ticket.agent_name || 'Support'),
           body: chatPushBody(message),
           ticketId: ticket.oid,
+          messageDoc: doc,
         });
       }
     } catch (e) {
