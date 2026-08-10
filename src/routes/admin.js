@@ -188,13 +188,21 @@ function createAdminRouter(io) {
       const doc = socketMessageDoc(closingMessage);
       io.to(String(ticket.oid)).emit('send-message', { success: true, message: 'Message sent successfully', messageDoc: doc });
       io.to(ADMIN_ROOM).emit('admin:ticket-activity', { ticketId: String(ticket.oid), lastActivity: messageDoc(closingMessage).createdAt });
-      if (!isCustomerConnected(io, ticket.oid)) {
-        sendChatPushNotification(ticket.customer_fcm_token, {
-          title: String(ticket.agent_name || 'Support'),
-          body: chatPushBody(closingMessage),
-          ticketId: ticket.oid,
-        });
-      }
+      // Unlike a normal reply (skipped when isCustomerConnected - see
+      // POST .../messages above), this push always fires. A ticket close
+      // is a one-time terminal event, not one more message in an ongoing
+      // conversation: "socket connected" only means the app has a live
+      // connection, not that it's in the foreground right now - a
+      // customer with the app merely backgrounded would otherwise get a
+      // silent socket event with no OS notification at all and no other
+      // way to learn their chat ended. A distinct title (not the generic
+      // agent-name one regular replies use) keeps it recognizable in the
+      // notification tray instead of blending in as just another message.
+      sendChatPushNotification(ticket.customer_fcm_token, {
+        title: 'Chat Ended',
+        body: chatPushBody(closingMessage),
+        ticketId: ticket.oid,
+      });
     }
 
     io.to(String(ticket.oid)).emit('ticket-updated', { ticketId: String(ticket.oid), status: updated.status, rating: updated.rating || null, feedback: updated.feedback || '' });
