@@ -18,17 +18,19 @@ let alertSent = false;
  * discovered after. Edge-triggered - exactly one alert when it goes
  * down, one when it recovers - so a prolonged outage doesn't spam the
  * admin's WhatsApp every 2 minutes for however long it lasts.
+ *
+ * Probes the plain site root, NOT /v1/api/get-user-data with a fake
+ * token - confirmed live: Hostinger's own hosting-side firewall blocked
+ * this deployment's egress IP and, when asked why, explicitly named
+ * "repeated failed logins" against this exact host as one of the trigger
+ * patterns. A bogus bearer token sent to an auth endpoint every 2 minutes,
+ * forever, is precisely that pattern regardless of how low the request
+ * rate is - any plain HTTP response (any status) still proves the network
+ * path is up, without ever presenting invalid credentials.
  */
 async function checkOnce() {
   try {
-    const res = await fetch(`${BASE_URL}/v1/api/get-user-data`, {
-      headers: { Authorization: 'Bearer health-monitor-probe' },
-      signal: AbortSignal.timeout(8000),
-    });
-    // Any HTTP response at all (even a 401 for this deliberately-invalid
-    // token) proves the network path itself is fine - only a thrown
-    // exception (DNS/timeout/connection failure) means PHP is actually
-    // unreachable.
+    const res = await fetch(BASE_URL, { signal: AbortSignal.timeout(8000) });
     void res;
     if (alertSent) {
       await whatsapp.notifyAdminWhatsApp(

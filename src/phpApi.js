@@ -25,6 +25,23 @@ const FETCH_TIMEOUT_MS = 5000;
 const MAX_ATTEMPTS = 3;
 const RETRY_BACKOFF_MS = 500;
 
+// Circuit breaker across ALL callers, not per-token - confirmed live: when
+// Hostinger's hosting-side firewall blocked this deployment's egress IP
+// and was asked why, they named "rapid WebSocket reconnect loops" and
+// "bursts of requests" as exactly the trigger pattern to avoid. Once PHP is
+// confirmed down, every caller fails immediately (no network call at all)
+// for this cooldown window instead of running its own retries - a
+// mass-reconnect (e.g. right after this service itself restarts) then
+// costs a small, bounded number of requests total instead of scaling with
+// how many clients happen to reconnect at once.
+const CIRCUIT_COOLDOWN_MS = 20 * 1000;
+let circuitOpenUntil = 0;
+let circuitOpenError = null;
+// True while ONE caller's retries are actively confirming a suspected
+// outage - see the comment in the catch block below for why this matters
+// even before circuitOpenUntil is set.
+let probing = false;
+
 /**
  * Retries only on a NETWORK-level failure (fetch() itself throwing -
  * DNS/timeout/connection reset), never on a clean HTTP response with a
@@ -39,19 +56,51 @@ const RETRY_BACKOFF_MS = 500;
  * backoffs) bounded at ~16.5s instead of stacking three full 10s waits.
  */
 async function fetchUserData(token) {
-  let lastErr;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  if (Date.now() < circuitOpenUntil) {
+    throw circuitOpenError || new Error('PHP API unreachable');
+  }
+
+  // Every caller still makes its OWN first real request with its OWN
+  // token - each caller can only ever return ITS OWN response, never
+  // another caller's, so a healthy PHP still serves every token correctly
+  // even during a burst. Only the RETRY work below is deduped.
+  try {
+    const res = await fetch(`${BASE_URL}/v1/api/get-user-data`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    circuitOpenUntil = 0;
+    return res;
+  } catch (firstErr) {
+    // circuitOpenUntil only gets set once a full retry cycle below
+    // confirms a real outage - a truly simultaneous burst (many callers'
+    // first attempts all failing around the same instant) would otherwise
+    // ALL start their own retry loop before any of them finishes. This
+    // synchronous flag closes that gap: only the first caller to land here
+    // actually retries; everyone else just fails on their own single
+    // attempt instead of also spending 2 more rounds each in parallel.
+    if (probing) { throw firstErr; }
+    probing = true;
     try {
-      return await fetch(`${BASE_URL}/v1/api/get-user-data`, {
-        headers: { Authorization: `Bearer ${token}` },
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      });
-    } catch (e) {
-      lastErr = e;
-      if (attempt < MAX_ATTEMPTS) { await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS * attempt)); }
+      let lastErr = firstErr;
+      for (let attempt = 2; attempt <= MAX_ATTEMPTS; attempt++) {
+        await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS * (attempt - 1)));
+        try {
+          const res = await fetch(`${BASE_URL}/v1/api/get-user-data`, {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+          });
+          circuitOpenUntil = 0;
+          return res;
+        } catch (e) { lastErr = e; }
+      }
+      circuitOpenUntil = Date.now() + CIRCUIT_COOLDOWN_MS;
+      circuitOpenError = lastErr;
+      throw lastErr;
+    } finally {
+      probing = false;
     }
   }
-  throw lastErr;
 }
 
 async function getUserInfo(token) {
