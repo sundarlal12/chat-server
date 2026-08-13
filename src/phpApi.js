@@ -164,4 +164,78 @@ async function getUserInfo(token) {
   return user;
 }
 
-module.exports = { getUserInfo };
+/**
+ * Opens a real, trackable deposit order on the main PHP site - the exact
+ * same POST /v1/api/add-fund the app itself calls to start a deposit
+ * (see api/v1/api/add-fund.php), so it inherits that endpoint's min/max
+ * deposit limits and its settings.upi live-check for free rather than
+ * reimplementing them here. Needs the CUSTOMER's own bearer token (its
+ * auth_user() check), not any credential of this service's own - callers
+ * only ever invoke this from a customer message path (see
+ * maybeAutoReplyToDepositGreeting), never on an admin's behalf.
+ *
+ * Returns null on ANY failure (PHP unreachable, deposit limits, deposits
+ * disabled, malformed response) - deliberately not thrown, since the
+ * caller's fallback is to still send the QR unbacked (best-effort, no
+ * auto-tracking) rather than fail the whole auto-reply over this.
+ *
+ * mobile/tn are read back off the response's own paymentLink query string
+ * (never re-derived locally) because paymentLink's `mobile` is the exact
+ * value PHP stored on the payments row (`$user['mobile']`) - that's the
+ * only value guaranteed to match what check-deposit-status.php will look
+ * up later, which may differ in format from this service's own cached
+ * ticket.customer_phone (a separate field off get-user-data).
+ */
+async function createDepositOrder(token, amount) {
+  if (!token) { return null; }
+  let res;
+  try {
+    res = await fetch(`${BASE_URL}/v1/api/add-fund`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amount: Number(amount) }),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+  } catch (e) {
+    console.warn(`createDepositOrder: PHP unreachable (${e.message})`);
+    return null;
+  }
+  if (!res.ok) { return null; }
+  let body;
+  try { body = await res.json(); } catch { return null; }
+  const r = body && body.response;
+  if (!r || !r.orderId || !r.paymentLink) { return null; }
+  let mobile = '';
+  let tn = '';
+  try {
+    const u = new URL(r.paymentLink);
+    mobile = u.searchParams.get('mobile') || '';
+    tn = u.searchParams.get('tn') || '';
+  } catch { /* malformed paymentLink - treated as failure below */ }
+  if (!mobile) { return null; }
+  return { orderId: String(r.orderId), mobile, tn };
+}
+
+/**
+ * GET /v1/api/check-deposit-status - no auth (see that file's own
+ * docblock for why order_id+mobile matching a real row is the security
+ * boundary instead). Returns the raw status string ('pending'/'success'/
+ * 'failed') or null if the call itself failed (network/non-2xx/malformed
+ * body) - callers treat null the same as 'pending' (keep polling) since a
+ * transient failure here is never proof of anything.
+ */
+async function checkDepositStatus(orderId, mobile) {
+  try {
+    const res = await fetch(
+      `${BASE_URL}/v1/api/check-deposit-status?order_id=${encodeURIComponent(orderId)}&mobile=${encodeURIComponent(mobile)}`,
+      { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) }
+    );
+    if (!res.ok) { return null; }
+    const body = await res.json();
+    return (body && body.result && body.result.status) || null;
+  } catch {
+    return null;
+  }
+}
+
+module.exports = { getUserInfo, createDepositOrder, checkDepositStatus };

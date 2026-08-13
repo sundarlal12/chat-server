@@ -1,6 +1,7 @@
 const QRCode = require('qrcode');
 const { newObjectId, isObjectId } = require('./helpers');
 const store = require('./store');
+const phpApi = require('./phpApi');
 const { KIND_TO_MESSAGE_TYPE, classify, sniffKind } = require('./attachmentPolicy');
 
 /**
@@ -313,6 +314,35 @@ function genUpiRefPair() {
   return { tn: genRef(), tr: genRef() };
 }
 
+// Mirrors api/v1/api/addPg.php's own client-side polling script exactly
+// (first check at 3s, every 5s after, 60 attempts total = ~5 minutes) so
+// this behaves identically to a customer having that page open, just
+// without them needing to. check-deposit-status.php is the ONLY place a
+// deposit is ever auto-credited (see its own docblock) - this poller's
+// entire job is to keep calling it so that crediting actually happens;
+// this service never touches the wallet/transaction itself.
+const DEPOSIT_POLL_FIRST_DELAY_MS = 3000;
+const DEPOSIT_POLL_INTERVAL_MS = 5000;
+const DEPOSIT_POLL_MAX_ATTEMPTS = 60;
+
+/**
+ * Fire-and-forget - deliberately not awaited by the caller (a customer's
+ * send-message call shouldn't hang for up to 5 minutes). Stops as soon as
+ * PHP reports a final 'success'/'failed', or after DEPOSIT_POLL_MAX_ATTEMPTS
+ * - a transient failure (network blip, PHP outage) is treated the same as
+ * 'pending' and just retried next tick, same as addPg.php's own script.
+ */
+function pollDepositStatusInBackground(orderId, mobile) {
+  let attempts = 0;
+  const tick = async () => {
+    attempts++;
+    const status = await phpApi.checkDepositStatus(orderId, mobile);
+    if (status === 'success' || status === 'failed') { return; }
+    if (attempts < DEPOSIT_POLL_MAX_ATTEMPTS) { setTimeout(tick, DEPOSIT_POLL_INTERVAL_MS); }
+  };
+  setTimeout(tick, DEPOSIT_POLL_FIRST_DELAY_MS);
+}
+
 /**
  * Operator-requested auto-reply: the agent identity replies with a
  * deposit-instructions image whenever either of two independent triggers
@@ -356,18 +386,26 @@ function genUpiRefPair() {
  * caption was confirmed to carry the text).
  *
  * The QR image itself is generated fresh on every send (a real `upi://pay`
- * intent, VPA from DEPOSIT_UPI_VPA, a freshly-minted tn/tr pair via
- * genUpiRefPair - see api/v1/api/addPg.php on the main site for the
- * equivalent per-order QR this mirrors the format of) rather than reused
- * from one static pre-uploaded attachment, so a UPI account rotation only
- * requires updating the env var, never re-uploading an image.
+ * intent, VPA from DEPOSIT_UPI_VPA) rather than reused from one static
+ * pre-uploaded attachment, so a UPI account rotation only requires
+ * updating the env var, never re-uploading an image. `tr` is a REAL
+ * order_id whenever possible - createDepositOrder (phpApi.js) opens an
+ * actual `payments` row on the main site via the same POST /v1/api/add-fund
+ * the app itself uses (see api/v1/api/addPg.php for the equivalent
+ * per-order QR this mirrors the format of), and pollDepositStatusInBackground
+ * then polls check-deposit-status.php for ~5 minutes so a real scan+pay
+ * gets auto-credited exactly like the app's own deposit flow - this
+ * function never touches the wallet itself. If order creation fails
+ * (customer's token unavailable/expired, PHP outage, deposit limits), the
+ * QR still sends with a locally-generated, untracked tr/tn pair (same
+ * format, just not backed by a real row) rather than sending nothing.
  *
  * Returns an array (currently 0 or 1 message) rather than a single
  * message-or-null so callers don't need special-casing if this ever grows
  * back to multiple messages - empty if neither trigger holds, or
  * DEPOSIT_UPI_VPA isn't configured.
  */
-async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message) {
+async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message, customerToken) {
   const topicOid = String(ticketBeforeThisMessage.topic_oid || '');
   const content = String(message.content || '').trim();
 
@@ -386,7 +424,10 @@ async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message)
   if (!DEPOSIT_UPI_VPA) { return []; }
   const replyText = isFirstDepositGreeting ? DEPOSIT_GREETING_TEXT : DEPOSIT_KEYWORD_TEXT;
 
-  const { tn, tr } = genUpiRefPair();
+  const order = await phpApi.createDepositOrder(customerToken, DEPOSIT_QR_DEFAULT_AMOUNT);
+  const fallback = genUpiRefPair();
+  const tr = order ? order.orderId : fallback.tr;
+  const tn = order && order.tn ? order.tn : fallback.tn;
   const upiIntent = `upi://pay?${new URLSearchParams({
     pa: DEPOSIT_UPI_VPA,
     pn: 'PAPA777',
@@ -395,7 +436,11 @@ async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message)
     tn,
     tr,
   })}`;
-  const qrPng = await QRCode.toBuffer(upiIntent, { type: 'png', width: 320, margin: 1 });
+  // 200px (down from an original 320px) - the full-size render was coming
+  // through oversized/scattered in the app's chat image bubble, per
+  // operator report; still comfortably scannable at this size, matching
+  // the ~210px addPg.php itself displays its own QR at.
+  const qrPng = await QRCode.toBuffer(upiIntent, { type: 'png', width: 200, margin: 1 });
   // Cheap sanity check on our own generated bytes (same verified-not-trusted
   // gate every other attachment in this service goes through) rather than
   // trusting the qrcode library's output blindly.
@@ -451,6 +496,13 @@ async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message)
   });
 
   await store.updateTicket(String(ticket.oid), { deposit_qr_sent_at: imageMessage.created_at });
+
+  // Only worth polling a REAL order - an unbacked fallback tr can never
+  // resolve to a payments row, so check-deposit-status.php would just
+  // 404 every time (see its own docblock). Not awaited - see this
+  // function's own docblock for why (a customer's send-message call
+  // shouldn't hang for up to 5 minutes).
+  if (order) { pollDepositStatusInBackground(order.orderId, order.mobile); }
 
   // Operator call: the image's own caption already carries the text
   // (see above), so a separate follow-up text message is redundant - just

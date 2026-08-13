@@ -53,7 +53,7 @@ function createTicketsRouter(io) {
       // ticket's socket room, same as an admin reply. Sends the image and its
       // follow-up text as two separate messages/events, in order - see
       // maybeAutoReplyToDepositGreeting's own comment for why.
-      const autoReplies = await maybeAutoReplyToDepositGreeting(ticket, message);
+      const autoReplies = await maybeAutoReplyToDepositGreeting(ticket, message, req.chatToken);
       for (const reply of autoReplies) {
         const doc = socketMessageDoc(reply);
         const eventName = chatMessageEventName(reply);

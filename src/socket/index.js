@@ -62,6 +62,9 @@ function attachChatSocket(io) {
       const user = await verifyToken(token);
       if (!user) { return next(new Error('Please authenticate')); }
       socket.user = user;
+      // See auth.js's req.chatToken for why the raw token is kept, not
+      // just the decoded user - maybeAutoReplyToDepositGreeting needs it.
+      socket.token = token;
       next();
     } catch (e) {
       // Without this, a rejected promise here (e.g. PHP timing out - see
@@ -154,7 +157,7 @@ function attachChatSocket(io) {
         // messages/events, in order - see maybeAutoReplyToDepositGreeting's
         // own comment for why, and chatMessageEventName for why each one
         // may go out under a different event name/shape.
-        const autoReplies = await maybeAutoReplyToDepositGreeting(ticket, message);
+        const autoReplies = await maybeAutoReplyToDepositGreeting(ticket, message, socket.token);
         for (const reply of autoReplies) {
           const autoDoc = socketMessageDoc(reply);
           const eventName = chatMessageEventName(reply);

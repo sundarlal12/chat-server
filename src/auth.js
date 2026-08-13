@@ -33,6 +33,11 @@ function requireAuth() {
       const user = await verifyToken(token);
       if (!user) { return res.status(401).json({ code: 401, message: 'Please authenticate' }); }
       req.chatUser = user;
+      // The raw token itself, not just the decoded user - chatLogic.js's
+      // deposit auto-reply needs to call PHP's own POST /v1/api/add-fund
+      // (auth_user()-gated) on the customer's behalf to open a real,
+      // trackable payments row - see maybeAutoReplyToDepositGreeting.
+      req.chatToken = token;
       next();
     } catch (e) {
       next(e);
