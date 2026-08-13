@@ -200,17 +200,38 @@ async function createDepositOrder(token, amount) {
     console.warn(`createDepositOrder: PHP unreachable (${e.message})`);
     return null;
   }
-  if (!res.ok) { return null; }
+  if (!res.ok) {
+    // Was previously swallowed silently, which made a real failure here
+    // (bad/expired token, min/max deposit limits, settings.upi empty -
+    // see add-fund.php) indistinguishable from "everything's fine, order
+    // just wasn't created for some untraceable reason" in the logs - the
+    // exact gap that made a real customer's paid-but-uncredited deposit
+    // (order_id 20260813162021093871171, reported 2026-08-13) impossible
+    // to diagnose after the fact.
+    let detail = '';
+    try { detail = await res.text(); } catch { /* best-effort */ }
+    console.warn(`createDepositOrder: add-fund returned HTTP ${res.status}: ${detail.slice(0, 300)}`);
+    return null;
+  }
   let body;
-  try { body = await res.json(); } catch { return null; }
+  try { body = await res.json(); } catch (e) {
+    console.warn(`createDepositOrder: add-fund response wasn't valid JSON (${e.message})`);
+    return null;
+  }
   const r = body && body.response;
-  if (!r || !r.orderId || !r.paymentLink) { return null; }
+  if (!r || !r.orderId || !r.paymentLink) {
+    console.warn(`createDepositOrder: add-fund response missing orderId/paymentLink: ${JSON.stringify(body).slice(0, 300)}`);
+    return null;
+  }
   let mobile = '';
   try {
     const u = new URL(r.paymentLink);
     mobile = u.searchParams.get('mobile') || '';
   } catch { /* malformed paymentLink - treated as failure below */ }
-  if (!mobile) { return null; }
+  if (!mobile) {
+    console.warn(`createDepositOrder: paymentLink had no mobile param: ${r.paymentLink}`);
+    return null;
+  }
   return { orderId: String(r.orderId), mobile };
 }
 
