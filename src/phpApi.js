@@ -179,7 +179,7 @@ async function getUserInfo(token) {
  * caller's fallback is to still send the QR unbacked (best-effort, no
  * auto-tracking) rather than fail the whole auto-reply over this.
  *
- * mobile/tn are read back off the response's own paymentLink query string
+ * mobile is read back off the response's own paymentLink query string
  * (never re-derived locally) because paymentLink's `mobile` is the exact
  * value PHP stored on the payments row (`$user['mobile']`) - that's the
  * only value guaranteed to match what check-deposit-status.php will look
@@ -206,14 +206,12 @@ async function createDepositOrder(token, amount) {
   const r = body && body.response;
   if (!r || !r.orderId || !r.paymentLink) { return null; }
   let mobile = '';
-  let tn = '';
   try {
     const u = new URL(r.paymentLink);
     mobile = u.searchParams.get('mobile') || '';
-    tn = u.searchParams.get('tn') || '';
   } catch { /* malformed paymentLink - treated as failure below */ }
   if (!mobile) { return null; }
-  return { orderId: String(r.orderId), mobile, tn };
+  return { orderId: String(r.orderId), mobile };
 }
 
 /**
