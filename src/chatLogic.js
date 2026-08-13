@@ -1,3 +1,4 @@
+const QRCode = require('qrcode');
 const { newObjectId, isObjectId } = require('./helpers');
 const store = require('./store');
 const { KIND_TO_MESSAGE_TYPE, classify, sniffKind } = require('./attachmentPolicy');
@@ -273,10 +274,18 @@ async function insertMessage(user, ticket, body) {
 const DEPOSIT_TOPIC_OID = '6791e9794040440cc2242d75';
 const WITHDRAW_TOPIC_OID = '6790e068484db7edd6e49775';
 const OTHERS_TOPIC_OID = '6791e98a4040440cc2242d7f';
-// Pre-uploaded via upload-chat-attachment - already sitting in this
-// service's own chat_attachments table (operator-provided oid), not a
-// hotlinked third-party URL.
-const DEPOSIT_GREETING_ATTACHMENT_OID = '6a74378327acff9a7d355dcf';
+// UPI VPA the generated deposit QR pays into - a Railway env var, not
+// hardcoded or read from the main site's DB, since this rotates
+// independently of a deploy (bank/UPI account changes are common for this
+// business) and this service has no other connection to the PHP site's
+// `settings` table. No fallback: if unset, the auto-reply is skipped
+// entirely (see below) rather than ever sending a QR to nowhere.
+const DEPOSIT_UPI_VPA = process.env.DEPOSIT_UPI_VPA || '';
+// This generic "how to deposit" QR isn't tied to any specific pending
+// order (unlike the main site's own per-order QR at api/v1/api/addPg.php),
+// so `am` is just a fixed starting point the customer can still edit in
+// their UPI app before paying, not an amount actually owed.
+const DEPOSIT_QR_DEFAULT_AMOUNT = process.env.DEPOSIT_QR_DEFAULT_AMOUNT || '200';
 const DEPOSIT_GREETING_TEXT = "Good morning! 🙏 Here's how to deposit";
 // Separate text for the keyword trigger (below) - it can fire any time in
 // the conversation, not just as a first-message greeting, so "Good
@@ -288,6 +297,21 @@ const GREETING_RE = /^(hi+|hello+|hey+|helo+|namaste|namaskar|good\s*(morning|af
 // comes in (same "best-effort, unconfirmed" caveat as the voice-note
 // format guesses earlier in this file's history).
 const DEPOSIT_KEYWORD_RE = /\b(deposit|add\s*(money|cash|funds?)|recharge|how\s*(do|to)\s*i?\s*pay|payment|paisa|minimum\s*deposit)\b/i;
+
+/**
+ * date('YmdHis') + a 9-digit random suffix, matching the main PHP site's
+ * own order_id/tn generator exactly (api/v1/api/add-fund.php's $genRef) -
+ * same shared stamp, two independently-randomized suffixes for tn/tr - so
+ * a real UPI app sees the same shape of reference it would from a normal
+ * in-app deposit.
+ */
+function genUpiRefPair() {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  const genRef = () => stamp + String(Math.floor(Math.random() * 1e9)).padStart(9, '0');
+  return { tn: genRef(), tr: genRef() };
+}
 
 /**
  * Operator-requested auto-reply: the agent identity replies with a
@@ -331,12 +355,17 @@ const DEPOSIT_KEYWORD_RE = /\b(deposit|add\s*(money|cash|funds?)|recharge|how\s*
  * was tried in between and dropped again (operator call - redundant once
  * caption was confirmed to carry the text).
  *
+ * The QR image itself is generated fresh on every send (a real `upi://pay`
+ * intent, VPA from DEPOSIT_UPI_VPA, a freshly-minted tn/tr pair via
+ * genUpiRefPair - see api/v1/api/addPg.php on the main site for the
+ * equivalent per-order QR this mirrors the format of) rather than reused
+ * from one static pre-uploaded attachment, so a UPI account rotation only
+ * requires updating the env var, never re-uploading an image.
+ *
  * Returns an array (currently 0 or 1 message) rather than a single
  * message-or-null so callers don't need special-casing if this ever grows
- * back to multiple messages - empty if neither trigger holds, or the
- * configured attachment oid doesn't resolve to a real, verified image (see
- * attachmentPolicy.js's sniffKind for why content is verified rather than
- * trusted).
+ * back to multiple messages - empty if neither trigger holds, or
+ * DEPOSIT_UPI_VPA isn't configured.
  */
 async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message) {
   const topicOid = String(ticketBeforeThisMessage.topic_oid || '');
@@ -354,11 +383,23 @@ async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message)
   // triggers with one flag, since either one sending it once is enough; a
   // genuinely new ticket (deposit_qr_sent_at unset) gets it again.
   if (ticketBeforeThisMessage.deposit_qr_sent_at) { return []; }
+  if (!DEPOSIT_UPI_VPA) { return []; }
   const replyText = isFirstDepositGreeting ? DEPOSIT_GREETING_TEXT : DEPOSIT_KEYWORD_TEXT;
 
-  const attachment = await store.getAttachment(DEPOSIT_GREETING_ATTACHMENT_OID);
-  if (!attachment) { return []; }
-  const kind = sniffKind(attachment.data);
+  const { tn, tr } = genUpiRefPair();
+  const upiIntent = `upi://pay?${new URLSearchParams({
+    pa: DEPOSIT_UPI_VPA,
+    pn: 'PAPA777',
+    am: Number(DEPOSIT_QR_DEFAULT_AMOUNT).toFixed(2),
+    cu: 'INR',
+    tn,
+    tr,
+  })}`;
+  const qrPng = await QRCode.toBuffer(upiIntent, { type: 'png', width: 320, margin: 1 });
+  // Cheap sanity check on our own generated bytes (same verified-not-trusted
+  // gate every other attachment in this service goes through) rather than
+  // trusting the qrcode library's output blindly.
+  const kind = sniffKind(qrPng);
   if (!kind) { return []; }
 
   const ticket = ticketBeforeThisMessage;
@@ -379,6 +420,16 @@ async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message)
     video_image: null,
   };
 
+  const attachmentOid = newObjectId();
+  await store.insertAttachment({
+    oid: attachmentOid,
+    uploader_oid: String(ticket.recipient_oid || ''),
+    original_name: 'deposit-qr.png',
+    mime_type: kind.mimetypes[0],
+    size_bytes: qrPng.length,
+    data: qrPng,
+  });
+
   const imageMessage = await store.insertMessageRow({
     ...agentFields,
     oid: newObjectId(),
@@ -393,10 +444,10 @@ async function maybeAutoReplyToDepositGreeting(ticketBeforeThisMessage, message)
     // caption on the image, no separate text message needed.
     caption: replyText,
     message_type: kind.messageType,
-    attachment_url: `${base}/v1/api/chat-attachment/${DEPOSIT_GREETING_ATTACHMENT_OID}`,
+    attachment_url: `${base}/v1/api/chat-attachment/${attachmentOid}`,
     attachment_type: kind.kind,
-    attachment_name: attachment.original_name || '',
-    attachment_size: attachment.size_bytes || 0,
+    attachment_name: 'deposit-qr.png',
+    attachment_size: qrPng.length,
   });
 
   await store.updateTicket(String(ticket.oid), { deposit_qr_sent_at: imageMessage.created_at });
