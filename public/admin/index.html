@@ -85,8 +85,8 @@
     height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--bg);
   }
   #login-box {
-    width: 320px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
-    padding: 28px; box-shadow: var(--shadow);
+    width: 320px; max-width: calc(100vw - 32px); background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 28px; box-shadow: var(--shadow);
   }
   #login-logo {
     display: flex; align-items: center; gap: 10px; margin-bottom: 18px;
@@ -177,7 +177,12 @@
   /* ---------- Chat panel ---------- */
   #chat-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
   #chat-placeholder { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-faint); font-size: 13px; }
-  #chat-header { padding: 14px 18px; border-bottom: 1px solid var(--border); background: var(--surface); display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  #chat-header { padding: 14px 18px; border-bottom: 1px solid var(--border); background: var(--surface); display: flex; align-items: flex-start; gap: 10px; }
+  #chat-header-content { flex: 1; min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  /* Only meaningful on the mobile layout below (two-pane -> single-pane) -
+     hidden here so desktop, which always shows both panes, never sees it. */
+  #chat-back-btn { display: none; background: none; border: none; color: var(--text-muted); font-size: 20px; line-height: 1; cursor: pointer; padding: 2px 0 0; flex-shrink: 0; }
+  #chat-back-btn:hover { color: var(--brand); }
   #chat-header .name { font-size: 14px; font-weight: 700; color: var(--text); }
   #chat-header .name .phone { font-size: 12px; font-weight: 500; color: var(--text-muted); }
   #chat-header .subject { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
@@ -270,6 +275,26 @@
   .toast .toast-close { cursor: pointer; color: var(--text-faint); font-size: 14px; line-height: 1; background: none; border: none; padding: 0; }
   .toast .toast-close:hover { color: var(--text); }
   @keyframes toast-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* ---------- Mobile (phone-width) layout ----------
+     Desktop always shows the ticket list and the open chat side by side
+     (#ticket-panel is a fixed 320px next to a flexed #chat-panel). Below
+     this breakpoint that split leaves almost no room for the chat itself,
+     so instead only one pane is shown at a time: the ticket list first,
+     then the chat (with a back button) once a conversation is opened -
+     #main's "chat-open" class (toggled in openTicket()/the back button's
+     handler below) is what switches between them. */
+  @media (max-width: 768px) {
+    #ticket-panel { width: 100%; border-right: none; }
+    #main.chat-open #ticket-panel { display: none; }
+    #main:not(.chat-open) #chat-panel { display: none; }
+    #chat-back-btn { display: inline-flex; align-items: center; }
+    header { padding: 10px 12px; }
+    header .who { display: none; }
+    header .brand .name small { display: none; }
+    header .header-actions { gap: 6px; }
+    .msg { max-width: 78%; }
+  }
 </style>
 </head>
 <body>
@@ -543,10 +568,16 @@
     currentTicketId = ticketId;
     renderedMessageIds = new Set();
     document.querySelectorAll('.ticket-row').forEach((r) => r.classList.toggle('selected', r.dataset.id === ticketId));
+    // No-op on desktop (gated behind the mobile media query) - on a phone
+    // this is what swaps the ticket list out for the open chat.
+    $('#main').classList.add('chat-open');
 
     const panel = $('#chat-panel');
     panel.innerHTML = `
-      <div id="chat-header"><div class="name">Loading…</div></div>
+      <div id="chat-header">
+        <button id="chat-back-btn" type="button" aria-label="Back to conversations">←</button>
+        <div id="chat-header-content"><div class="name">Loading…</div></div>
+      </div>
       <div id="ticket-history-panel" class="hidden"></div>
       <div id="messages"></div>
       <div id="pending-file"></div>
@@ -557,6 +588,7 @@
         <textarea id="msg-input" placeholder="Type a reply…" rows="1"></textarea>
         <button id="send-btn" class="primary">Send</button>
       </div>`;
+    $('#chat-back-btn').addEventListener('click', () => { $('#main').classList.remove('chat-open'); });
 
     let data;
     try {
@@ -564,7 +596,7 @@
     } catch (e) { return; }
     currentTicket = data.ticket;
 
-    $('#chat-header').innerHTML = `
+    $('#chat-header-content').innerHTML = `
       <div>
         <div class="name">${escapeHtml(currentTicket.customerFullName || currentTicket.customerName || 'Customer')}${currentTicket.customerPhone ? ` <span class="phone">📱 ${escapeHtml(currentTicket.customerPhone)}</span>` : ''}</div>
         <div class="subject">${escapeHtml(currentTicket.subject)} · <span class="badge ${currentTicket.status === 'closed' ? 'closed' : 'open'}">${escapeHtml(currentTicket.status)}</span></div>
