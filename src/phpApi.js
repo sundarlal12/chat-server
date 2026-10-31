@@ -8,7 +8,7 @@
  * decision - see auth_tokens_bundle() in the PHP repo), so no separate
  * credential is needed.
  */
-const BASE_URL = process.env.PHP_API_BASE_URL || 'https://papa777.sbs';
+const BASE_URL = process.env.PHP_API_BASE_URL || 'https://papaa777.in';
 const CACHE_TTL_MS = 5 * 60 * 1000;
 // How much longer, past the normal 5-minute TTL, a session that was
 // genuinely verified once is still trusted IF PHP is unreachable when it's

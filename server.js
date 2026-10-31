@@ -97,12 +97,12 @@ app.get('/health/php-check', async (req, res) => {
 
 // Diagnostic-only, temporary: reveals this deployment's actual outbound
 // (egress) IP, via a public IP-echo service - needed specifically because
-// /health/php-check confirmed papa777.sbs is fully reachable from
+// /health/php-check confirmed papaa777.in is fully reachable from
 // elsewhere but times out from THIS deployment (same "Hostinger blocking
 // Railway's IP" class of issue already seen once with MySQL - see
 // README), and Railway doesn't surface its egress IP anywhere in its own
 // dashboard on the base plan. Whatever IP this reports is what needs
-// allowlisting on the Hostinger/firewall side in front of papa777.sbs.
+// allowlisting on the Hostinger/firewall side in front of papaa777.in.
 app.get('/health/egress-ip', async (req, res) => {
   try {
     const r = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(8000) });
@@ -123,7 +123,7 @@ const io = new Server(httpServer, {
 attachChatSocket(io);
 
 // Routes are mounted directly under /v1/api, matching the app's real request
-// paths exactly (GET/POST https://ca-api.papa777.sbs/v1/api/get-all-topics etc).
+// paths exactly (GET/POST https://ca-api.papaa777.in/v1/api/get-all-topics etc).
 app.use('/v1/api', topicsRoute);
 app.use('/v1/api', chatDataRoute);
 app.use('/v1/api', createTicketsRouter(io));

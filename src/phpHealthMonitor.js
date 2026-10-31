@@ -1,6 +1,6 @@
 const whatsapp = require('./whatsapp');
 
-const BASE_URL = process.env.PHP_API_BASE_URL || 'https://papa777.sbs';
+const BASE_URL = process.env.PHP_API_BASE_URL || 'https://papaa777.in';
 const CHECK_INTERVAL_MS = 2 * 60 * 1000;
 const FAILURE_THRESHOLD = 2;
 
